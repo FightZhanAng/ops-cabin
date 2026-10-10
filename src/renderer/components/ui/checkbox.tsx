@@ -3,6 +3,7 @@ import { cn } from "cn"
 import { CheckIcon } from "lucide-react"
 import { Checkbox as CheckboxPrimitive } from "radix-ui"
 
+/** 勾选框：4px 方角，选中 = 石墨实底（夜间反相为亮底）；保留 radix 的 role="checkbox" 行为 */
 function Checkbox({
   className,
   ...props
@@ -11,7 +12,7 @@ function Checkbox({
     <CheckboxPrimitive.Root
       data-slot="checkbox"
       className={cn(
-        "peer size-4 shrink-0 rounded-[4px] border border-input shadow-xs transition-shadow outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 data-[state=checked]:border-primary data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground dark:bg-input/30 dark:aria-invalid:ring-destructive/40 dark:data-[state=checked]:bg-primary",
+        "peer size-4 shrink-0 cursor-pointer rounded-md border border-line-2 bg-panel transition-colors duration-150 outline-none focus-visible:border-fg focus-visible:ring-[3px] focus-visible:ring-ring/45 disabled:cursor-not-allowed disabled:opacity-45 aria-invalid:border-destructive data-[state=checked]:border-btn data-[state=checked]:bg-btn data-[state=checked]:text-btn-fg",
         className
       )}
       {...props}

@@ -326,3 +326,69 @@ M4 的「离开总览页」在 React 挂载前点击会落空，导致总览常�
 双击 portable 版体验免安装形态；真实 GitHub 发版（需先建 `FightZhanAng/ops-cabin` 仓库，
 CI 文件已就绪但未实跑）。
 
+
+---
+
+## 16. M9：界面重设计 —— 仪器面板 v2（2026-10-10）
+
+**背景**：v1 观感被评审否决（原话「页面太丑」）。以产品名里的「舱」为设计论点整体推翻重做：
+**这不是一块仪表盘（dashboard），是一台仪表（instrument）**。
+
+**三块基石**
+
+1. 颜色是信号，不是装饰 —— 全站没有蓝、没有品牌色；交互动作一律石墨墨阶（`btn` 系）；
+   绿 / 黄 / 红只表示状态与风险，且永远配文字（色盲双通道）；只有危险动作用红。
+2. 数据是读数 —— 数字 / 端口 / 地址 / 路径 / 时间 / 微标签一律 `B612 Mono`（空客为驾驶舱
+   显示屏委托设计的字体，内嵌 woff2，离线可用）+ tabular-nums，成列右对齐。
+3. 结构是仪器面板 —— `Plate`（整板）+ `Bay`（格）用 1px 发丝线拼合，取代漂浮的圆角卡片。
+
+**四种新零件**（`src/renderer/components/instrument/`）：`Lamp` 仪表灯（7px，夜间带辉光，
+全站唯一允许的光）/ `SegBar` 分段仪表条（26–32 格 LED，扫描时叠加扫掠，色调由
+`freeTone`/`loadTone` 决定）/ `Plate` + `Bay` / `Rocker` 拨档。
+**签名元素**：`Scope` 端口雷达 —— 端口按 √ 刻度落到方位角、TCP 内环 UDP 外环、amber 扫描线
+4.5s 一圈（全站唯一常驻动效，尊重 `prefers-reduced-motion`），悬停读出目标详情。
+
+**双主题**：昼间「冷钢工作台」/ 夜间「驾驶舱夜航」；主题机制不变（`nativeTheme` +
+`prefers-color-scheme`）。`--faint` 两主题都提到 ≥4.5:1（仪表刻印必须读得清）。
+
+**改动面**：43 个文件（38 渲染层 + `index.css`/`main.tsx`/`volumes.ts` + 4 份设计文档 + 时序适配）；
+`design-system/opscabin/MASTER.md` 与 `pages/*.md` 全部重写为 v2（含每页 e2e 契约清单）。
+
+**回归暴露并修复的三个真实问题**
+
+1. **首屏双重 PowerShell**：仪表轨曾加过一次 `listVolumes`（每次切页刷新），与页面自身请求并发
+   抢 PowerShell 冷启动，压垮 smoke / disk 的固定窗口读数 → 删掉该读数，回到 v1 的 IPC 时序。
+2. **`listVolumes` 改走 `fs.statfs` 快路径**：PowerShell 冷启动 1.2–1.6s，让「首屏 2.5s 内看到
+   分区」长期贴边（M8 之前只是勉强绿）→ statfs 毫秒级、数值与 Get-PSDrive 完全一致（total 精确
+   相同、free 差 10KB 级），缺盘 ENOENT 跳过，一块盘都拿不到才回退原 PowerShell 实现。
+3. **端口页首屏**：离开总览后监控器停采，首屏现采冷启动 >2s。曾让 `ports:list` 优先返回最近快照，
+   被 e2e-ports 抓住语义损失（「新服务端口出现」失败）→ 已回滚为「每次现采」；smoke 驱动的
+   等待窗口 2s→5s（测试层适配，与 §14 的 M6 先例一致）。
+
+**测试层修的两个既有脆弱点（与改版无关，但同批修掉）**
+
+1. `e2e-scan`（M2 遗留套件，不在九套回归清单内）：进度断言「350ms 内收到首条进度」与 M3+ 引擎
+   演进脱节（worker 启动 + 测量阶段 > 350ms）→ 改为轮询等待（≤5s）；单独运行全绿，
+   在高负载连跑下该套件偶发 fixture/worker 抖动（已记录）。
+2. `e2e-check`「重启恢复窗口位置」：探针助手只等「文件存在」不等「文件更新」，重启阶段可能读到
+   上一轮的 `window.json`（默认坐标 370,120）→ 重启前先删该探针，连跑 3/3 全绿。
+
+两处的定性均由 `git diff 1a727e0 -- src/main` 佐证：M9 对主进程的改动面只有 `volumes.ts`
+与 `index.ts` 里一行注释，窗口/扫描路径一行未碰。
+
+**验证（最终树）**
+
+- 九套 e2e 全绿：`e2e-check`(15) / `e2e-disk`(34) / `e2e-ports`(22) / `e2e-ports-m5`(35) /
+  `e2e-overview`(22) / `e2e-settings`(37) / `e2e-update`(22) / `e2e-smoke`(30，深浅两轮) /
+  `e2e-portable`(12)；
+- `pnpm dist` 出安装包（setup / portable / `latest.yml` / blockmap），`e2e-portable` 全绿；
+- `e2e-scan` 全绿（单独运行）；
+- 冒烟截图留档：`%TEMP%/ops-cabin-smoke-light`、`-dark`（四页 × 深浅两轮，人工目检过：
+  分区读数与走势痕迹、雷达底座与图例、监听表定宽不溢出、设置分组行距与对比度）。
+
+**已知遗留（后续候选，未拍板）**
+
+- 端口页首屏现采冷启动 2–4s：可考虑新增 `ports:last` 通道让页面先用最近快照立即可视（保持
+  `ports:list` 的「现采」语义不变），或并行化 `collectPorts`；
+- `e2e-ports` 的「变化检测」段在系统负载下偶发红（M4/M6 已知敏感性，与本次改版无关）；
+- 上一节 §15 的人工待办（安装包双击实测、真实 GitHub 发版）仍然有效。

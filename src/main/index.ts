@@ -390,6 +390,7 @@ function registerIpc(): void {
   ipcMain.handle('volumes:list', () => listVolumes())
 
   /* 端口雷达 */
+  // 语义是「现在有什么在监听」：每次现采一次（监控器会把并发采样合流）
   ipcMain.handle('ports:list', async (): Promise<PortsSnapshot | null> => {
     if (!portsMonitor) return null
     try {

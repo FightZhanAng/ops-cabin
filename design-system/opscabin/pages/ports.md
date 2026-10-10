@@ -1,37 +1,39 @@
-# Ports（端口）Page Overrides
+# 端口页（Ports）· v2 页面规范
 
-> **PROJECT:** OpsCabin · **Page Type:** 桌面应用内页面（实时监控 + 处置）
-> 本文件规则**覆盖** MASTER.md；仅记录页面级增量与偏离。
->
-> **校正说明：** 技能自动生成的版本混入了 landing/定价模板与无关的 voice waveform 条目，已人工重写。
-> 条目依据本会话内技能检索：shadcn 域（Table 语义结构 / DataTable / Sonner toast）、
-> ux 域（宽表滚动、反馈、状态双通道）、react 域（虚拟化、stable keys、避免多余 effect）。
+> 覆盖 Master 的页面级规则；其余一切以 `MASTER.md` 为准。
 
----
+## 页面职责
 
-## 布局
+雷达页：哪些关注端口被占用（亮灯）、全部监听端口一览、变化时间线。
 
-- 上半：**关注端口卡片阵** —— 每卡：端口号（等宽大字）+ 状态灯 + 进程名 / PID + 已占用时长 + 处置按钮
-- 下半：**全部监听端口表** —— 列：端口 / 状态 / 进程 / PID / 内存 / 启动时间 / 运行时长 / 操作
-- 行点击打开进程详情抽屉（命令行、路径、父子进程、结束进程按钮）
+## 版式（目标）
 
-## 组件
+```
+┌ Plate: RADAR · WATCH 关注端口 (1fr) ───────────────┬ SCOPE 雷达底座 (212px) ──┐
+│ 每 2 秒刷新 · 更新于 15:59:39（ports-status）      │     (雷达 Scope)         │
+│ [5173 ● 占用中] [8080 ○ 空闲] [＋ 关注端口]        │  61 监听 · 2 关注 · 1 占用 │
+│                                                    │  内环 TCP · 外环 UDP      │
+└────────────────────────────────────────────────────┴──────────────────────────┘
+┌ Plate: LISTENERS 全部监听端口 ────── 51 / 51 条 ─────────────────────────────┐
+│ [⌕ 搜索端口 / 进程 / 路径]  [全部|TCP|UDP]                                    │
+│ 端口↑ 协议 监听地址 进程 PID 内存 运行时长 ★                                 │
+│ 80    TCP 0.0.0.0   Steam++…  17112 84.7 MB 4h 48m  ☆                      │
+└──────────────────────────────────────────────────────────────────────────────┘
+右轨 EVENTS 变化记录 (264px，独立滚动)                     ← ChangeTimeline
+```
 
-- 状态灯：绿 = 活跃监听；中性墨阶 = 空闲/未监听。**必须配文字标签**（双通道）
-- 数据表：语义化 `thead/tbody`；数字列等宽、右对齐；表头可排序；顶部搜索 + 状态筛选
-- 变化记录：端口状态变化时间线（何时、谁、变化类型：被占用 / 释放 / 换主）
-- 通知：关注端口变化推系统通知（Electron Notification），可在设置中关闭
+## 零件用法
 
-## 交互规则
+- 雷达 `Scope`（`@/components/instrument/scope`，props：`watchlist`、`entries`）：放进 `Bay`，body 用 `bg-panel-2` 凹槽（内嵌 1px `line`）居中；雷达是**唯一**允许的常驻动效。
+- 关注卡片：`bg-panel-2` 底、`border-line` 边、`rounded-md`；顶行 `.num text-[18px] font-bold` 端口 + `Lamp` + 状态词（占用中 = ok；空闲 = idle）；次行 label 13px；末行 `.num text-[10.5px] text-faint`（`node.exe · PID 4321` 或「未监听」）；`watch-remove` 为 `icon-xs ghost`（hover 显现，title「取消关注」）；空态 = 虚线添加卡（`watch-add`）。
+- 全部监听表：搜索框 `h-7 rounded-sm border-line-2 bg-panel-2`（带 Search 图标）；协议筛选用 `Rocker`（全部 / TCP / UDP）；端口列可排序（`.num font-bold`，箭头用 Lucide `ArrowUp/ArrowDown`，别用字符箭头）；数字列（PID / 内存 / 运行时长）`.num` 右对齐；`port-watch-toggle` 是星形 `icon-xs`（已关注 = 实心星 + `text-fg`，未关注 = 空心星 + `text-dim`）。
+- 变化记录右轨：`border-l bg-panel`；标题 `eyebrow EVENTS` + 「变化记录」+ 计数；每条 `change-entry`：`.num` 时钟（faint）+ `.num` 端口 + 类型词（occupy=`ink`，release=`dim`，change=`warn`）+ 进程 `.num text-dim`；空态「还没有变化记录 —— 关注的端口有变化时会记在这里。」。
+- ProcDialog：头部大号 `.num` 端口 + 协议 chip + 状态 `Lamp`；读数行两列（PID / 内存 / 运行时长 / 启动时间）；命令行块 = `bg-panel-2` 凹槽 + `.num break-all` + `max-h-32 overflow-auto`；`结束进程` = `destructive`（触发带「未保存的数据」警示的确认）。
+- AddWatchDialog：端口/名称/备注三行；输入框 `num`（端口）、`h-7`；「常用端口」快捷 chips 可保留。
 
-- 结束进程 = 危险动作：确认对话框写明"结束 {进程名} (PID {pid})，未保存的数据可能丢失"
-- 操作结果用 toast 反馈（成功与失败都要）（技能 shadcn 域：Sonner 语义化 toast）
-- 高频刷新（1-2 秒轮询）：避免整表重挂载 —— 滚动位置与选中态必须保留
-- 表行数可达成百上千：虚拟化渲染
-- 关注清单增删改即时落盘并反馈
+## e2e 契约（不许动）
 
-## 避免
-
-- ❌ 表格横向溢出裁掉数字列（给滚动容器）
-- ❌ 用红色表达"端口被占用"（中性事实；红只留给冲突与危险动作）
-- ❌ 静默成功
+- 元素：`watch-grid`、`port-table`、`change-timeline`、`port-row`（>10 条，且带 `data-port`）、`port-watch-toggle`、`watch-card` + `data-port` + **`data-occupied`（`'true'`/`'false'` 字符串）**、`watch-add`、`watch-remove`、`add-watch-dialog`、`watch-port-input`、`watch-label-input`、`watch-submit`、`proc-dialog`、`kill-open`、`kill-confirm`、`change-entry`、`ports-status`。
+- 结构：`port-row` 必须是 `<tr>`，首列是 `<td>` 且点击可打开详情对话框；`role="alertdialog"`（确认框）保留；`role="checkbox"` 保留。
+- 文案：`PID`、`结束进程`、`未保存的数据`、`已结束`（toast）、`已释放`（变化条目）。
+- toast 由 sonner 渲染（`[data-sonner-toast]` 选择器不能丢）。

@@ -31,7 +31,7 @@ const EMPTY_HINT: Record<ScanGroupKey, string> = {
   largeFiles: '大文件扫描需要指定目录：点上方「扫描主目录」或「选择目录…」。'
 }
 
-/** 磁盘页：扫描 → 勾选 → 预览 → 清理 → 反馈 */
+/** 磁盘页：扫描 → 勾选 → 预览 → 清理 → 反馈，自上而下就是这条流水线 */
 export function DiskView(): JSX.Element {
   const [groups, setGroups] = useState<ScanGroupResult[]>([])
   const [progress, setProgress] = useState<ScanProgress | null>(null)
@@ -170,117 +170,122 @@ export function DiskView(): JSX.Element {
   const totalItems = groups.reduce((sum, group) => sum + group.items.length, 0)
 
   return (
-    <div className="flex h-full min-h-0">
-      <PartitionList volumes={volumes} onRefresh={loadVolumes} />
+    <div className="flex h-full min-h-0 flex-col">
+      {/* 上半区：左轨分区读数 + 主区流水线 + 右滑详情 */}
+      <div className="flex min-h-0 flex-1">
+        <PartitionList volumes={volumes} onRefresh={loadVolumes} />
 
-      <div className="flex min-w-0 flex-1 flex-col">
-        {/* 工具条 */}
-        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <Button
-            size="sm"
-            disabled={scanning}
-            onClick={() => void runScan(['safe', 'devCaches'])}
-            data-testid="scan-start"
-          >
-            {scanning ? '扫描中…' : '开始扫描'}
-          </Button>
-          {scanning && (
+        <div className="flex min-w-0 flex-1 flex-col">
+          {/* 工具条：动作在左、读数在右 */}
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
             <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void window.opsCabin.cancelScan()}
-              data-testid="scan-cancel"
+              disabled={scanning}
+              onClick={() => void runScan(['safe', 'devCaches'])}
+              data-testid="scan-start"
             >
-              取消
+              {scanning ? '扫描中…' : '开始扫描'}
             </Button>
-          )}
-          <div className="ml-auto flex items-center gap-3 text-[11px] text-dim">
-            {scanError ? (
-              <span className="text-danger">{scanError}</span>
-            ) : (
-              <>
-                {skipped > 0 && <span>已跳过 {skipped} 个受限条目</span>}
-                {totalItems > 0 && <span>共 {totalItems} 项候选</span>}
-              </>
-            )}
-          </div>
-        </div>
-
-        {scanning && <ScanProgressBar progress={progress} />}
-
-        {/* 分组切换 */}
-        <Tabs value={tab} onValueChange={(value) => setTab(value as ScanGroupKey)}>
-          <div className="flex items-center gap-2 border-b border-line px-4 pt-2">
-            <TabsList>
-              {GROUP_ORDER.map((key) => (
-                <TabsTrigger key={key} value={key} data-testid={`tab-${key}`}>
-                  {GROUP_LABEL[key]}
-                  {counts.get(key) ? `（${counts.get(key)}）` : ''}
-                </TabsTrigger>
-              ))}
-            </TabsList>
-            {tab === 'largeFiles' && (
-              <div className="ml-auto flex gap-2 pb-1.5">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={scanning}
-                  onClick={() => void scanLargeIn()}
-                  data-testid="scan-home"
-                >
-                  扫描主目录
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={scanning}
-                  onClick={() => void pickAndScanLarge()}
-                  data-testid="scan-pick"
-                >
-                  选择目录…
-                </Button>
-              </div>
-            )}
-          </div>
-        </Tabs>
-
-        {/* 结果表 */}
-        <div className="min-h-0 flex-1">
-          <ResultTable
-            items={activeItems}
-            selected={selected}
-            focusId={focusItem?.id ?? null}
-            emptyHint={EMPTY_HINT[tab]}
-            onToggle={toggleItem}
-            onToggleAll={toggleAll}
-            onFocus={setFocusItem}
-          />
-        </div>
-
-        {/* 底部操作栏 */}
-        <div className="flex items-center gap-3 border-t border-line px-4 py-2.5">
-          <span className="text-[12px] text-dim" data-testid="selection-summary">
-            已选 {selectedItems.length} 项 · 预计释放 {formatBytes(selectedBytes)}
-          </span>
-          <div className="ml-auto flex items-center gap-2">
-            {selected.size > 0 && (
-              <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
-                清除选择
+            {scanning && (
+              <Button
+                variant="outline"
+                onClick={() => void window.opsCabin.cancelScan()}
+                data-testid="scan-cancel"
+              >
+                取消
               </Button>
             )}
-            <Button
-              size="sm"
-              disabled={selectedItems.length === 0}
-              onClick={() => setDialogOpen(true)}
-              data-testid="clean-open"
-            >
-              清理选中项
-            </Button>
+            <div className="ml-auto flex items-center gap-3 text-[11px]">
+              {scanError ? (
+                <span className="text-danger">{scanError}</span>
+              ) : (
+                <>
+                  {skipped > 0 && <span className="num text-dim">已跳过 {skipped} 个受限条目</span>}
+                  {totalItems > 0 && <span className="num text-dim">共 {totalItems} 项候选</span>}
+                </>
+              )}
+            </div>
+          </div>
+
+          {scanning && <ScanProgressBar progress={progress} />}
+
+          {/* 分组档位 */}
+          <Tabs value={tab} onValueChange={(value) => setTab(value as ScanGroupKey)}>
+            <div className="flex items-center gap-2 border-b border-line px-4 py-2">
+              <TabsList>
+                {GROUP_ORDER.map((key) => {
+                  const count = counts.get(key)
+                  return (
+                    <TabsTrigger key={key} value={key} data-testid={`tab-${key}`}>
+                      {GROUP_LABEL[key]}
+                      {count ? <span className="num text-[11px] text-dim">{count}</span> : null}
+                    </TabsTrigger>
+                  )
+                })}
+              </TabsList>
+              {tab === 'largeFiles' && (
+                <div className="ml-auto flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={scanning}
+                    onClick={() => void scanLargeIn()}
+                    data-testid="scan-home"
+                  >
+                    扫描主目录
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={scanning}
+                    onClick={() => void pickAndScanLarge()}
+                    data-testid="scan-pick"
+                  >
+                    选择目录…
+                  </Button>
+                </div>
+              )}
+            </div>
+          </Tabs>
+
+          {/* 结果表 */}
+          <div className="min-h-0 flex-1">
+            <ResultTable
+              items={activeItems}
+              selected={selected}
+              focusId={focusItem?.id ?? null}
+              emptyHint={EMPTY_HINT[tab]}
+              onToggle={toggleItem}
+              onToggleAll={toggleAll}
+              onFocus={setFocusItem}
+            />
           </div>
         </div>
+
+        {focusItem && <DetailPanel item={focusItem} onClose={() => setFocusItem(null)} />}
       </div>
 
-      {focusItem && <DetailPanel item={focusItem} onClose={() => setFocusItem(null)} />}
+      {/* 底栏：选择读数 + 两个动作（横跨整页，与左轨在同一角相遇） */}
+      <div className="flex items-center gap-3 border-t border-line px-4 py-2">
+        <span className="num text-[12px] text-dim" data-testid="selection-summary">
+          已选 <span className="font-semibold text-fg">{selectedItems.length}</span> 项 · 预计释放{' '}
+          <span className="font-semibold text-fg">{formatBytes(selectedBytes)}</span>
+        </span>
+        <div className="ml-auto flex items-center gap-2">
+          {selected.size > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+              清除选择
+            </Button>
+          )}
+          <Button
+            size="sm"
+            disabled={selectedItems.length === 0}
+            onClick={() => setDialogOpen(true)}
+            data-testid="clean-open"
+          >
+            清理选中项
+          </Button>
+        </div>
+      </div>
 
       <CleanDialog
         open={dialogOpen}

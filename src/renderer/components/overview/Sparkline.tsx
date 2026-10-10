@@ -1,18 +1,20 @@
 import type { JSX } from 'react'
+import { cn } from 'cn'
 
 interface Props {
   /** 数据点（旧的在前） */
   series: number[]
   /** 满量程（默认 100） */
   max?: number
+  className?: string
 }
 
-/** 迷你走势线：SVG 折线（≤60 点）；当前值以大字呈现，它只负责趋势暗示 */
-export function Sparkline({ series, max = 100 }: Props): JSX.Element {
+/** 迷你走势线：SVG 折线（≤60 点）；是仪表读数旁的痕迹，不喧宾夺主 */
+export function Sparkline({ series, max = 100, className }: Props): JSX.Element {
   const width = 100
-  const height = 32
+  const height = 26
   if (series.length < 2) {
-    return <div className="h-8" aria-hidden />
+    return <div className={cn('h-[26px] w-full', className)} aria-hidden />
   }
   const step = width / (series.length - 1)
   const points = series
@@ -26,14 +28,14 @@ export function Sparkline({ series, max = 100 }: Props): JSX.Element {
     <svg
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
-      className="h-8 w-full"
+      className={cn('h-[26px] w-full', className)}
       aria-hidden
     >
       <polyline
         points={points}
         fill="none"
-        stroke="var(--signal)"
-        strokeWidth="1.5"
+        stroke="var(--dim)"
+        strokeWidth="1"
         vectorEffect="non-scaling-stroke"
         strokeLinejoin="round"
         strokeLinecap="round"

@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { toast } from 'sonner'
 import type { PortEntry } from '@shared/ports'
 import { formatBytes, formatClock, formatDuration } from '@shared/format'
+import { Lamp } from '@/components/instrument/lamp'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,6 +14,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -29,7 +31,19 @@ interface Props {
   onToggleWatch: (entry: PortEntry) => void
 }
 
-/** 进程详情：端口/地址、进程信息、命令行，以及危险的「结束进程」 */
+/** 一格读数：微标签 + 等宽数字 */
+function Readout({ label, value }: { label: string; value: string }): JSX.Element {
+  return (
+    <div className="min-w-0">
+      <div className="eyebrow text-faint">{label}</div>
+      <div className="num mt-0.5 truncate text-[12.5px]" title={value}>
+        {value}
+      </div>
+    </div>
+  )
+}
+
+/** 进程详情：端口/地址、进程读数、命令行，以及危险的「结束进程」 */
 export function ProcDialog({ entry, onOpenChange, onToggleWatch }: Props): JSX.Element {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [killing, setKilling] = useState(false)
@@ -64,57 +78,56 @@ export function ProcDialog({ entry, onOpenChange, onToggleWatch }: Props): JSX.E
         <DialogContent data-testid="proc-dialog" className="max-w-lg">
           {entry && (
             <>
-              <DialogHeader>
-                <DialogTitle className="flex items-baseline gap-2">
-                  <span className="font-mono text-[18px] tabular-nums">端口 {entry.port}</span>
-                  <span className="text-[11px] font-normal uppercase text-dim">
+              <DialogHeader className="gap-1.5">
+                <div className="eyebrow text-faint">PORT · PROCESS</div>
+                <DialogTitle className="flex items-center gap-2">
+                  <span className="num text-[24px] font-bold leading-none">{entry.port}</span>
+                  <Badge variant="outline" className="uppercase">
                     {entry.protocol}
+                  </Badge>
+                  <span className="flex items-center gap-1.5 text-[12px] font-normal text-ok">
+                    <Lamp state="ok" size={7} label="占用中" />
+                    占用中
                   </span>
                 </DialogTitle>
-                <DialogDescription className="font-mono text-[11px]">
+                <DialogDescription className="num text-[11px]">
                   {entry.addresses.join('  ')}
                 </DialogDescription>
               </DialogHeader>
 
-              <div className="space-y-3 text-[12px]">
-                <div className="flex gap-8">
-                  <div>
-                    <div className="text-[11px] text-dim">进程</div>
-                    <div className="mt-0.5">{entry.processName ?? '未知进程'}</div>
+              <div className="space-y-3">
+                <div className="min-w-0">
+                  <div className="eyebrow text-faint">PROCESS</div>
+                  <div className="mt-0.5 truncate text-[13px]" title={entry.processName ?? ''}>
+                    {entry.processName ?? '未知进程'}
                   </div>
-                  <div>
-                    <div className="text-[11px] text-dim">PID</div>
-                    <div className="mt-0.5 font-mono tabular-nums">{entry.pid}</div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-dim">内存</div>
-                    <div className="mt-0.5 font-mono tabular-nums">
-                      {entry.memoryBytes !== null ? formatBytes(entry.memoryBytes) : '—'}
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-[11px] text-dim">已运行</div>
-                    <div className="mt-0.5 font-mono tabular-nums">
-                      {entry.startedAt
-                        ? `${formatDuration(Date.now() - entry.startedAt)}（${formatClock(entry.startedAt)} 启动）`
-                        : '—'}
-                    </div>
-                  </div>
-                </div>
-
-                {entry.processPath && (
-                  <div>
-                    <div className="text-[11px] text-dim">路径</div>
-                    <div className="mt-0.5 break-all font-mono text-[11px] leading-relaxed">
+                  {entry.processPath && (
+                    <div className="num mt-0.5 break-all text-[11px] leading-relaxed text-dim">
                       {entry.processPath}
                     </div>
-                  </div>
-                )}
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 rounded-sm border border-line bg-panel-2 p-2.5">
+                  <Readout label="PID" value={String(entry.pid)} />
+                  <Readout
+                    label="内存"
+                    value={entry.memoryBytes !== null ? formatBytes(entry.memoryBytes) : '—'}
+                  />
+                  <Readout
+                    label="运行时长"
+                    value={entry.startedAt ? formatDuration(Date.now() - entry.startedAt) : '—'}
+                  />
+                  <Readout
+                    label="启动时间"
+                    value={entry.startedAt ? formatClock(entry.startedAt) : '—'}
+                  />
+                </div>
 
                 {entry.commandLine && (
                   <div>
-                    <div className="text-[11px] text-dim">命令行</div>
-                    <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-md border border-line bg-panel-2 p-2 font-mono text-[10.5px] leading-relaxed text-dim">
+                    <div className="eyebrow text-faint">命令行</div>
+                    <pre className="num mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded-sm border border-line bg-panel-2 p-2 text-[10.5px] leading-relaxed text-dim">
                       {entry.commandLine}
                     </pre>
                   </div>
@@ -135,7 +148,7 @@ export function ProcDialog({ entry, onOpenChange, onToggleWatch }: Props): JSX.E
                 {entry.processPath && (
                   <Button
                     size="sm"
-                    variant="outline"
+                    variant="ghost"
                     onClick={() => void window.opsCabin.showInFolder(entry.processPath as string)}
                   >
                     打开所在目录
@@ -143,8 +156,9 @@ export function ProcDialog({ entry, onOpenChange, onToggleWatch }: Props): JSX.E
                 )}
                 <Button
                   size="sm"
+                  variant="destructive"
                   data-testid="kill-open"
-                  className="ml-auto cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  className="ml-auto"
                   onClick={() => setConfirmOpen(true)}
                 >
                   结束进程
@@ -158,20 +172,19 @@ export function ProcDialog({ entry, onOpenChange, onToggleWatch }: Props): JSX.E
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>结束进程</AlertDialogTitle>
-            <AlertDialogDescription className="text-[12px] leading-relaxed">
+            <div className="eyebrow text-faint">KILL · CONFIRM</div>
+            <AlertDialogTitle className="text-[14px] font-bold">结束进程</AlertDialogTitle>
+            <AlertDialogDescription className="text-[12px] leading-relaxed text-dim">
               结束 {entry?.processName ?? '进程'}（PID {entry?.pid}）？未保存的数据可能丢失；
               若优雅关闭失败将强制结束。
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={killing} className="cursor-pointer">
-              取消
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={killing}>取消</AlertDialogCancel>
             <AlertDialogAction
               data-testid="kill-confirm"
+              variant="destructive"
               disabled={killing}
-              className="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={(event) => {
                 event.preventDefault()
                 void doKill()

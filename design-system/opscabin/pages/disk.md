@@ -1,39 +1,38 @@
-# Disk（磁盘）Page Overrides
+# 磁盘页（Disk）· v2 页面规范
 
-> **PROJECT:** OpsCabin · **Page Type:** 桌面应用内页面（扫描 + 处置）
-> 本文件规则**覆盖** MASTER.md；仅记录页面级增量与偏离。
->
-> **校正说明：** 技能自动生成的版本为 landing page 建议且无数据可视化规则，已人工重写。
-> 条目依据本会话内技能检索：chart 域（Treemap a11y 仅 C 级、必须表格替代；条形降序 + 值标签）、
-> ux 域（危险确认、bulk actions、成功反馈、表格溢出）、react 域（大列表虚拟化、stable keys）。
+> 覆盖 Master 的页面级规则；其余一切以 `MASTER.md` 为准。
 
----
+## 页面职责
 
-## 布局
+扫描 → 勾选 → 预览 → 清理 → 反馈。一条流水线，界面自上而下就是这条流水线。
 
-- 左侧：分区列表（每分区一条占用横条 + 已用/总量数字）
-- 中间：扫描结果主区 —— 分级 tabs（安全清理 / 开发缓存 / 大文件 / 重复文件），**主视图是表格**
-- 右侧：详情/预览抽屉（选中条目的路径、大小、风险说明、所在目录入口）
-- 底部操作栏：多选计数（"已选 12 项 · 预计释放 3.2 GB"）+「预览」「清理」
+## 版式（目标）
 
-## 组件与图表
+```
+┌ VOLUMES 左轨 (184px) ┬ 工具条: [开始扫描] [取消]        已跳过 1 个受限条目 · 共 7 项候选 ┐
+│ 磁盘分区        ⟳   │ ──────────────────────────────────────────────────────────────── │
+│ C:  ▮▮▮▮▮▮▮▮▯▯ 91%  │ [安全清理 3 | 开发缓存 4 | 大文件]   （大文件页签时右侧：扫描主目录 / 选择目录…）│
+│ 剩余 12.5 GB / 共 136 GB │  表头(bg-panel-2)：☐ 名称 路径 大小 文件数 风险                │
+│ D:  ▮▮▮▮▮▮▮▯▯▯ 87%  │  行：☐ 用户临时文件  C:\…\Temp   3.3 GB  29,154  [安全]        │
+│ …                    │  …                                                              │
+├──────────────────────┴─────────────────────────────────────────────────────────────────┤
+│ 已选 3 项 · 预计释放 1.2 GB                      [清除选择] [清理选中项]                │
+└────────────────────────────────────────────────────────────────────────────────────────↵
+选中条目时右侧滑出 DetailPanel (264px)：FILE 名称 / 读数行 / 路径凹槽 / [定位文件] [关闭]
+```
 
-- 空间分布：Treemap 仅作辅助视图（chart 域：可访问性 C 级，**必须提供可钻取表格作为主视图**；层级不超过 3 层；标出大区块）
-- 分区占用：横向条形，按值降序，数值直显（chart 域：值标签默认可见）
-- 扫描进度：进度条 + 当前路径 + 已发现计数 +「取消」
-- 安全分级：三级标记（安全 / 谨慎 / 危险）用墨阶深浅 + 图标形状表达，不滥用彩色
-- 清理确认对话框：写清"删除什么、共多少、去向回收站（可恢复）"
+## 零件用法
 
-## 交互规则
+- 左轨：`border-r border-line bg-panel`；头部 = `eyebrow VOLUMES` + 「磁盘分区」+ 刷新 `icon-xs ghost`；每行 `volume-row`：`.num` 盘符 + `SegBar`(xs, 26, freeTone) + `.num` 小读行（`已用 X%` / `剩余 X / 共 Y`），hover `bg-panel-2`。
+- 工具条：`开始扫描` = `Button default`（石墨）；`取消` = `outline`（仅扫描中）；右侧 `.num text-[11px] text-dim` 读数（`已跳过 N 个受限条目`、`共 N 项候选`）；扫描错误 `text-danger`。
+- 页签：`Tabs`（已重做为档位观感），标签 = 名称 + `<span className="num text-dim">N</span>` 计数；大文件页签同排右侧两个 `outline sm` 按钮。
+- 结果表：`Table`；表头 sticky（`bg-panel-2`）；大小为 `.num` 右对齐、文件数 `.num` 右对齐、路径 `.num text-dim` 截断（`title` 给全路径）；风险 = `Badge ok`「安全」/ `Badge warn`「谨慎」；行可点（打开 DetailPanel）、hover；勾选用 radix `Checkbox`（保留 `role="checkbox"`）。
+- 底栏：`border-t`，左侧 `.num text-dim`「已选 N 项 · 预计释放 X」，右侧 `清除选择`（ghost，选中 >0 时出现）+ `清理选中项`（default，0 选中时 disabled）。
+- DetailPanel：`border-l bg-panel` 264px；路径块 = `bg-panel-2` 凹槽 + `.num break-all select-text`。
+- 清理对话框：标题「清理 N 项」；列表项 `.num` 路径截断 + 大小右对齐（超长滚动，max-h-[240px]）；回收站/永久删除二选一（永久删除选中时显示 danger 提示行）；确认按钮：回收站 = `default`，永久删除 = `destructive`。
 
-- 默认删除进回收站；"永久删除"是独立选项且需要更强的确认（ux：destructive confirm）
-- 结果表格支持多选与批量动作（ux：bulk actions 优先于逐行操作）
-- 完成必须给成功反馈（toast：释放 X GB）——不许静默成功（ux：success feedback）
-- 扫描结果可能上万条：虚拟化渲染，禁止一次性渲染全量 DOM（react 域）
-- 排序/过滤/分页按 DataTable 模式实现（技能 shadcn 域指南）
+## e2e 契约（不许动）
 
-## 避免
-
-- ❌ 表格撑破布局（宽表给滚动容器；ux：table overflow）
-- ❌ 只靠颜色表达风险等级
-- ❌ 危险操作没有预览（先干跑、后执行）
+- 元素：`scan-start`、`scan-cancel`、`scan-home`、`scan-pick`、`scan-progress`（出现又消失）、`tab-safe`、`tab-devCaches`、`tab-largeFiles`、`result-row`、`empty-state`（文本含「选择目录」）、`selection-summary`（文本含「已选 1 项」）、`clean-open`、`clean-dialog`（文本含「清理」与「回收站」）、`volume-row`（≥1）、`[data-slot="alert-dialog-cancel"]`、`[role="checkbox"]`。
+- 文案：`开始扫描`、`清理`、`回收站`、`选择目录`、`已选 N 项`。
+- 导航依赖：`nav button` 中文本精确「磁盘」的那个按钮可被 `.click()` 程序化点击（App 负责，勿改 `App.tsx`）。

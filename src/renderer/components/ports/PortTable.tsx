@@ -3,6 +3,9 @@ import type { JSX } from 'react'
 import { ArrowDown, ArrowUp, Search, Star } from 'lucide-react'
 import type { PortEntry } from '@shared/ports'
 import { formatBytes, formatDuration } from '@shared/format'
+import { Rocker, type RockerOption } from '@/components/instrument/rocker'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import {
   Table,
   TableBody,
@@ -20,13 +23,15 @@ interface Props {
 }
 
 type SortKey = 'port' | 'memory' | 'started'
+type ProtocolFilter = 'all' | 'tcp' | 'udp'
 
-const PROTOCOL_FILTERS = ['all', 'tcp', 'udp'] as const
-type ProtocolFilter = (typeof PROTOCOL_FILTERS)[number]
+const PROTOCOL_OPTIONS: ReadonlyArray<RockerOption<ProtocolFilter>> = [
+  { value: 'all', label: '全部', testId: 'proto-all' },
+  { value: 'tcp', label: 'TCP', testId: 'proto-tcp' },
+  { value: 'udp', label: 'UDP', testId: 'proto-udp' }
+]
 
-const FILTER_LABEL: Record<ProtocolFilter, string> = { all: '全部', tcp: 'TCP', udp: 'UDP' }
-
-/** 全部监听端口表：搜索 + 协议筛选 + 排序 + 关注切换 */
+/** 全部监听端口表：搜索 + 协议拨档 + 排序 + 关注切换 */
 export function PortTable({ entries, onOpen, onToggleWatch }: Props): JSX.Element {
   const [query, setQuery] = useState('')
   const [protocol, setProtocol] = useState<ProtocolFilter>('all')
@@ -58,12 +63,20 @@ export function PortTable({ entries, onOpen, onToggleWatch }: Props): JSX.Elemen
     }
   }
 
-  const sortableHead = (label: string, key: SortKey, className: string): JSX.Element => (
+  const sortableHead = (
+    label: string,
+    key: SortKey,
+    className: string,
+    align: 'left' | 'right' = 'left'
+  ): JSX.Element => (
     <TableHead className={className}>
       <button
         type="button"
         onClick={() => headerSort(key)}
-        className="flex cursor-pointer items-center gap-1 text-[11px] font-medium"
+        className={cn(
+          'flex w-full cursor-pointer items-center gap-1 text-[11px] font-medium transition-colors duration-150 hover:text-fg',
+          align === 'right' && 'justify-end'
+        )}
       >
         {label}
         {sortKey === key &&
@@ -74,112 +87,100 @@ export function PortTable({ entries, onOpen, onToggleWatch }: Props): JSX.Elemen
 
   return (
     <div data-testid="port-table">
-      {/* 工具条 */}
-      <div className="mb-2 flex items-center gap-2">
+      {/* 读数与筛选行 */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-line px-3.5 py-2">
         <div className="relative">
-          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-dim" />
+          <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
           <input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索端口 / 进程 / 路径"
             data-testid="port-search"
-            className="w-56 rounded-md border border-line bg-panel-2 py-1.5 pl-7 pr-2 text-[12px] outline-none transition-colors duration-150 placeholder:text-dim focus-visible:border-signal"
+            className="h-7 w-56 rounded-sm border border-line-2 bg-panel-2 pl-7 pr-2 text-[12px] outline-none transition-colors duration-150 placeholder:text-faint focus-visible:border-fg/40"
           />
         </div>
-        <div className="flex items-center gap-0.5">
-          {PROTOCOL_FILTERS.map((value) => (
-            <button
-              key={value}
-              type="button"
-              data-testid={`proto-${value}`}
-              onClick={() => setProtocol(value)}
-              className={cn(
-                'cursor-pointer rounded-md px-2.5 py-1 text-[11px] transition-colors duration-150',
-                protocol === value ? 'bg-panel-2 font-medium text-fg' : 'text-dim hover:text-fg'
-              )}
-            >
-              {FILTER_LABEL[value]}
-            </button>
-          ))}
-        </div>
-        <span className="ml-auto font-mono text-[10px] text-dim">
+        <Rocker
+          size="sm"
+          aria-label="协议筛选"
+          value={protocol}
+          onChange={setProtocol}
+          options={PROTOCOL_OPTIONS}
+        />
+        <span className="num ml-auto text-[11px] text-dim">
           {filtered.length} / {entries.length} 条
         </span>
       </div>
 
-      <div className="overflow-hidden rounded-[10px] border border-line">
-        <Table>
-          <TableHeader>
-            <TableRow className="hover:bg-transparent">
-              {sortableHead('端口', 'port', 'w-20')}
-              <TableHead className="w-16 text-[11px]">协议</TableHead>
-              <TableHead className="text-[11px]">监听地址</TableHead>
-              <TableHead className="text-[11px]">进程</TableHead>
-              <TableHead className="w-20 text-[11px]">PID</TableHead>
-              {sortableHead('内存', 'memory', 'w-24 text-right')}
-              {sortableHead('运行时长', 'started', 'w-24 text-right')}
-              <TableHead className="w-10" />
+      {/* table-fixed + 全列定宽：窄窗口下不横向溢出，长内容在单元格内截断 */}
+      <Table className="table-fixed">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            {sortableHead('端口', 'port', 'w-[56px]')}
+            <TableHead className="w-[54px]">协议</TableHead>
+            <TableHead className="w-[22%]">监听地址</TableHead>
+            <TableHead className="w-[22%]">进程</TableHead>
+            <TableHead className="w-[62px] text-right">PID</TableHead>
+            {sortableHead('内存', 'memory', 'w-[80px]', 'right')}
+            {sortableHead('运行时长', 'started', 'w-[76px]', 'right')}
+            <TableHead className="w-9" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {filtered.length === 0 && (
+            <TableRow>
+              <TableCell colSpan={8} className="py-8 text-center text-[12px] text-dim">
+                {entries.length === 0 ? '正在读取端口…' : '没有匹配的端口'}
+              </TableCell>
             </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.length === 0 && (
-              <TableRow>
-                <TableCell colSpan={8} className="py-8 text-center text-[12px] text-dim">
-                  {entries.length === 0 ? '正在读取端口…' : '没有匹配的端口'}
-                </TableCell>
-              </TableRow>
-            )}
-            {filtered.map((entry) => (
-              <TableRow
-                key={`${entry.protocol}:${entry.port}`}
-                data-testid="port-row"
-                data-port={entry.port}
-                className="cursor-pointer"
-                onClick={() => onOpen(entry)}
+          )}
+          {filtered.map((entry) => (
+            <TableRow
+              key={`${entry.protocol}:${entry.port}`}
+              data-testid="port-row"
+              data-port={entry.port}
+              className="cursor-pointer"
+              onClick={() => onOpen(entry)}
+            >
+              <TableCell className="num text-[13px] font-bold">{entry.port}</TableCell>
+              <TableCell>
+                <Badge variant="outline" className="uppercase">
+                  {entry.protocol}
+                </Badge>
+              </TableCell>
+              <TableCell
+                className="num truncate text-[11px] text-dim"
+                title={entry.addresses.join('  ')}
               >
-                <TableCell className="font-mono text-[13px] font-medium tabular-nums">
-                  {entry.port}
-                </TableCell>
-                <TableCell className="text-[10px] uppercase text-dim">{entry.protocol}</TableCell>
-                <TableCell
-                  className="max-w-[200px] truncate font-mono text-[11px] text-dim"
-                  title={entry.addresses.join('  ')}
+                {entry.addresses.join('  ')}
+              </TableCell>
+              <TableCell className="truncate text-[12.5px]" title={entry.processName ?? ''}>
+                {entry.processName ?? '—'}
+              </TableCell>
+              <TableCell className="num text-right text-[12px] text-dim">{entry.pid}</TableCell>
+              <TableCell className="num text-right text-[12.5px]">
+                {entry.memoryBytes !== null ? formatBytes(entry.memoryBytes) : '—'}
+              </TableCell>
+              <TableCell className="num text-right text-[12.5px] text-dim">
+                {entry.startedAt ? formatDuration(Date.now() - entry.startedAt) : '—'}
+              </TableCell>
+              <TableCell className="text-center" onClick={(event) => event.stopPropagation()}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  data-testid="port-watch-toggle"
+                  title={entry.watched ? '取消关注' : '关注这个端口'}
+                  aria-label={entry.watched ? `取消关注端口 ${entry.port}` : `关注端口 ${entry.port}`}
+                  aria-pressed={entry.watched}
+                  onClick={() => onToggleWatch(entry)}
                 >
-                  {entry.addresses.join('  ')}
-                </TableCell>
-                <TableCell className="max-w-[160px] truncate text-[12px]">
-                  {entry.processName ?? '—'}
-                </TableCell>
-                <TableCell className="font-mono text-[11px] tabular-nums text-dim">
-                  {entry.pid}
-                </TableCell>
-                <TableCell className="text-right font-mono text-[12px] tabular-nums">
-                  {entry.memoryBytes !== null ? formatBytes(entry.memoryBytes) : '—'}
-                </TableCell>
-                <TableCell className="text-right font-mono text-[12px] tabular-nums text-dim">
-                  {entry.startedAt ? formatDuration(Date.now() - entry.startedAt) : '—'}
-                </TableCell>
-                <TableCell onClick={(event) => event.stopPropagation()}>
-                  <button
-                    type="button"
-                    data-testid="port-watch-toggle"
-                    title={entry.watched ? '取消关注' : '关注这个端口'}
-                    className="cursor-pointer rounded p-1 transition-colors duration-150 hover:bg-panel-2"
-                    onClick={() => onToggleWatch(entry)}
-                  >
-                    <Star
-                      className={cn(
-                        'size-3.5',
-                        entry.watched ? 'fill-signal text-signal' : 'text-dim'
-                      )}
-                    />
-                  </button>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+                  <Star className={cn(entry.watched ? 'fill-current text-fg' : 'text-dim')} />
+                </Button>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   )
 }

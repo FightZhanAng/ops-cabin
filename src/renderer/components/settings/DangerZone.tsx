@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { JSX } from 'react'
 import { toast } from 'sonner'
+import { Bay } from '@/components/instrument/plate'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,6 +19,9 @@ interface Props {
 }
 
 type ConfirmKind = 'clear-events' | 'reset' | null
+
+/** 危险动作的行内按钮：透明底 + 红描边，hover 才上红 —— 实底红留给确认按钮 */
+const DANGER_BUTTON = 'shrink-0 border-danger/45 text-danger hover:bg-danger/10'
 
 /** 危险区：清空变化记录 / 重置全部设置，动作都过二次确认 */
 export function DangerZone({ onResetSettings }: Props): JSX.Element {
@@ -41,48 +45,49 @@ export function DangerZone({ onResetSettings }: Props): JSX.Element {
   }
 
   return (
-    <section
-      className="rounded-[10px] border border-danger/30 bg-panel p-4"
+    <Bay
+      eyebrow="DANGER"
+      title="危险区"
+      hint="这里的动作不可撤销，都会先向你确认一次。"
+      className="border-l-2 border-l-danger-soft"
+      pad="none"
+      bodyClassName="pt-1"
       data-testid="danger-zone"
     >
-      <h2 className="text-[13px] font-semibold text-danger">危险区</h2>
-
-      <div className="mt-3 space-y-3 text-[12px]">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div>清空变化记录</div>
-            <div className="text-[11px] text-dim">
-              删除全部关注端口的变化历史（不影响关注清单）。
-            </div>
+      <div className="flex min-h-[38px] items-center justify-between gap-4 border-b border-line px-3.5 py-1.5">
+        <div className="min-w-0">
+          <div className="text-[12.5px]">清空变化记录</div>
+          <div className="mt-0.5 text-[11px] leading-relaxed text-dim">
+            删除全部关注端口的变化历史（不影响关注清单）。
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0 cursor-pointer"
-            data-testid="danger-clear-events"
-            onClick={() => setConfirm('clear-events')}
-          >
-            清空
-          </Button>
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className={DANGER_BUTTON}
+          data-testid="danger-clear-events"
+          onClick={() => setConfirm('clear-events')}
+        >
+          清空
+        </Button>
+      </div>
 
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <div>重置全部设置</div>
-            <div className="text-[11px] text-dim">
-              主题 / 通知 / 白名单 / 清理计划恢复默认（保留窗口位置）。
-            </div>
+      <div className="flex min-h-[38px] items-center justify-between gap-4 px-3.5 py-1.5">
+        <div className="min-w-0">
+          <div className="text-[12.5px]">重置全部设置</div>
+          <div className="mt-0.5 text-[11px] leading-relaxed text-dim">
+            主题 / 通知 / 白名单 / 清理计划恢复默认（保留窗口位置）。
           </div>
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0 cursor-pointer border-danger/40 text-danger hover:bg-danger/10"
-            data-testid="danger-reset"
-            onClick={() => setConfirm('reset')}
-          >
-            重置
-          </Button>
         </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className={DANGER_BUTTON}
+          data-testid="danger-reset"
+          onClick={() => setConfirm('reset')}
+        >
+          重置
+        </Button>
       </div>
 
       <AlertDialog
@@ -93,23 +98,22 @@ export function DangerZone({ onResetSettings }: Props): JSX.Element {
       >
         <AlertDialogContent data-testid="danger-confirm">
           <AlertDialogHeader>
+            <div className="eyebrow text-faint">DANGER · CONFIRM</div>
             <AlertDialogTitle>
               {confirm === 'reset' ? '重置全部设置' : '清空变化记录'}
             </AlertDialogTitle>
-            <AlertDialogDescription className="text-[12px] leading-relaxed">
+            <AlertDialogDescription>
               {confirm === 'reset'
                 ? '将把主题、通知开关、白名单与清理计划恢复默认值（窗口位置保留）。此操作不可撤销。'
                 : '将删除全部关注端口的变化历史。此操作不可撤销。'}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={running} className="cursor-pointer">
-              取消
-            </AlertDialogCancel>
+            <AlertDialogCancel disabled={running}>取消</AlertDialogCancel>
             <AlertDialogAction
+              variant="destructive"
               data-testid="danger-confirm-btn"
               disabled={running}
-              className="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
               onClick={(event) => {
                 event.preventDefault()
                 void runConfirmed()
@@ -120,6 +124,6 @@ export function DangerZone({ onResetSettings }: Props): JSX.Element {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </section>
+    </Bay>
   )
 }

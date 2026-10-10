@@ -2,47 +2,62 @@ import type { JSX } from 'react'
 import { RefreshCw } from 'lucide-react'
 import type { VolumeInfo } from '@shared/disk'
 import { formatBytes } from '@shared/format'
+import { SegBar, freeTone } from '@/components/instrument/seg-bar'
+import { Button } from '@/components/ui/button'
 
 interface Props {
   volumes: VolumeInfo[]
   onRefresh: () => void
 }
 
-/** 左侧分区列表：每个盘一条占用横条（低于 10GB 剩余转琥珀） */
+/** 左轨：每个分区一条分段仪表条 + 剩余读数（剩余 <10GB 转琥珀、<5GB 转红） */
 export function PartitionList({ volumes, onRefresh }: Props): JSX.Element {
   return (
-    <aside className="flex w-56 shrink-0 flex-col border-r border-line bg-panel">
-      <div className="flex items-center justify-between px-4 py-3">
-        <span className="text-[13px] font-semibold">磁盘分区</span>
-        <button
-          type="button"
+    <aside className="flex w-[184px] shrink-0 flex-col border-r border-line bg-panel">
+      <header className="flex items-start justify-between gap-1 pb-2.5 pl-3 pr-1.5 pt-3">
+        <div className="min-w-0">
+          <div className="eyebrow text-faint">VOLUMES</div>
+          <h2 className="text-[13px] font-semibold leading-snug">磁盘分区</h2>
+        </div>
+        <Button
+          size="icon-xs"
+          variant="ghost"
           onClick={onRefresh}
           title="刷新分区信息"
-          className="cursor-pointer rounded p-1 text-dim transition-colors duration-150 hover:bg-panel-2 hover:text-fg"
+          aria-label="刷新分区信息"
         >
-          <RefreshCw className="size-3.5" />
-        </button>
-      </div>
+          <RefreshCw />
+        </Button>
+      </header>
 
-      <div className="flex-1 space-y-4 overflow-auto px-4 pb-4">
-        {volumes.length === 0 && <div className="text-[11px] text-dim">读取中…</div>}
+      <div className="min-h-0 flex-1 overflow-auto border-t border-line">
+        {volumes.length === 0 && (
+          <div className="px-3 py-3 text-[11px] leading-relaxed text-dim">正在读取磁盘…</div>
+        )}
         {volumes.map((volume) => {
-          const percent = volume.total > 0 ? Math.round((volume.used / volume.total) * 100) : 0
-          const low = volume.free < 10 * 1024 ** 3
+          const ratio = volume.total > 0 ? volume.used / volume.total : 0
+          const percent = Math.round(ratio * 100)
           return (
-            <div key={volume.name} data-testid="volume-row">
-              <div className="flex items-baseline justify-between">
-                <span className="font-mono text-[12px] font-medium">{volume.name}</span>
-                <span className="font-mono text-[10px] text-dim">{percent}%</span>
+            <div
+              key={volume.name}
+              data-testid="volume-row"
+              className="border-b border-line px-3 py-2.5 transition-colors duration-150 hover:bg-panel-2"
+            >
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="num text-[12.5px] font-bold">{volume.name}</span>
+                <span className="num text-[11px] text-dim">已用 {percent}%</span>
               </div>
-              <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-panel-2">
-                <div
-                  className={`h-full rounded-full ${low ? 'bg-warn' : 'bg-signal'}`}
-                  style={{ width: `${percent}%` }}
-                />
-              </div>
-              <div className="mt-1 text-[10px] text-dim">
-                剩余 {formatBytes(volume.free)} / 共 {formatBytes(volume.total)}
+              <SegBar
+                ratio={ratio}
+                tone={freeTone(volume.free)}
+                segments={26}
+                size="xs"
+                className="mt-1.5"
+                aria-label={`${volume.name} 已用 ${percent}%，剩余 ${formatBytes(volume.free)}`}
+              />
+              <div className="num mt-1.5 flex items-baseline justify-between gap-2 text-[10.5px] text-faint">
+                <span className="truncate">剩余 {formatBytes(volume.free)}</span>
+                <span className="shrink-0">共 {formatBytes(volume.total)}</span>
               </div>
             </div>
           )

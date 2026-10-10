@@ -293,6 +293,8 @@ if (!page1) {
   check('退出出口生效（app:quit）', await quitApp(page1, app1))
 
   console.log('== 第二轮：重启恢复窗口位置 ==')
+  // 探针只等「文件存在」不等「文件更新」：不删掉上一轮的 window.json 就可能读到旧坐标
+  rmSync(join(smokeDir, 'window.json'), { force: true })
   app1 = launch()
   const page2 = await waitForReadyPage()
   if (!page2) {

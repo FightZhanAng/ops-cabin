@@ -2,6 +2,7 @@ import type { JSX } from 'react'
 import type { VolumeInfo } from '@shared/disk'
 import type { PortChange } from '@shared/ports'
 import { formatBytes, formatClock } from '@shared/format'
+import { Lamp } from '@/components/instrument/lamp'
 
 interface Props {
   volumes: VolumeInfo[]
@@ -16,49 +17,63 @@ const TYPE_TEXT: Record<PortChange['type'], string> = {
   change: '换了占用者'
 }
 
-/** 提醒流：磁盘将满 + 关注端口的最近变化；点条目跳对应页 */
+/** 信号条（annunciator）：有情况才亮灯成条；一切正常时只有一盏绿灯和一句话 */
 export function AlertFeed({ volumes, changes, onOpenDisk, onOpenPorts }: Props): JSX.Element {
   const lowVolumes = volumes.filter((volume) => volume.free < 10 * 1024 ** 3)
   const recentChanges = changes.slice(0, 5)
   const empty = lowVolumes.length === 0 && recentChanges.length === 0
 
-  return (
-    <section className="rounded-[10px] border border-line bg-panel p-4" data-testid="alert-feed">
-      <h2 className="text-[13px] font-semibold">提醒</h2>
+  const itemClass =
+    'flex min-w-0 flex-1 cursor-pointer items-center gap-2.5 bg-panel px-3.5 py-2.5 text-left text-[12px] transition-colors duration-150 hover:bg-panel-2'
 
+  return (
+    <div
+      data-testid="alert-feed"
+      className="flex items-stretch gap-px overflow-hidden rounded-lg border border-line-2 bg-line"
+    >
       {empty ? (
-        <div className="mt-2 text-[11px] leading-relaxed text-dim">
-          一切正常 —— 磁盘余量充足，关注端口没有新变化。
+        <div className="flex min-w-0 flex-1 items-center gap-2.5 bg-panel px-3.5 py-2.5 text-[12px]">
+          <Lamp state="ok" size={7} />
+          <span className="font-medium">一切正常</span>
+          <span className="truncate text-dim">—— 磁盘余量充足，关注端口没有新变化。</span>
         </div>
       ) : (
-        <ul className="mt-2 space-y-2">
+        <>
           {lowVolumes.map((volume) => (
-            <li
+            <button
               key={`vol-${volume.name}`}
+              type="button"
               data-testid="alert-item"
-              className="flex cursor-pointer items-baseline gap-2 text-[12px] transition-colors duration-150 hover:text-fg"
               onClick={onOpenDisk}
+              className={itemClass}
             >
-              <span className="text-warn">磁盘将满</span>
-              <span className="font-mono text-dim tabular-nums">
+              <Lamp state="warn" size={7} pulse />
+              <span className="shrink-0 font-medium text-warn">磁盘将满</span>
+              <span className="num truncate text-[11px] text-dim">
                 {volume.name} 剩余 {formatBytes(volume.free)}
               </span>
-            </li>
+            </button>
           ))}
           {recentChanges.map((change, index) => (
-            <li
+            <button
               key={`${change.at}-${change.port}-${index}`}
+              type="button"
               data-testid="alert-item"
-              className="flex cursor-pointer items-baseline gap-2 text-[12px] transition-colors duration-150 hover:text-fg"
               onClick={onOpenPorts}
+              className={itemClass}
             >
-              <span className="font-mono text-[10px] text-dim">{formatClock(change.at)}</span>
-              <span className="font-mono tabular-nums">{change.port}</span>
-              <span className="text-dim">{TYPE_TEXT[change.type]}</span>
-            </li>
+              {/* 端口被占用是中性事实：用墨阶表达，不用红 */}
+              <Lamp state={change.type === 'release' ? 'idle' : 'ink'} size={7} />
+              <span className="num shrink-0 text-[10.5px] text-faint">{formatClock(change.at)}</span>
+              <span className="num shrink-0 font-medium">{change.port}</span>
+              <span className="truncate text-dim">
+                {TYPE_TEXT[change.type]}
+                {change.type !== 'release' && change.process ? ` · ${change.process}` : ''}
+              </span>
+            </button>
           ))}
-        </ul>
+        </>
       )}
-    </section>
+    </div>
   )
 }

@@ -1,243 +1,117 @@
-# 运维舱（OpsCabin）设计系统 · Master
+# 运维舱（Ops Cabin）设计系统 · Master v2 —— 仪器面板（Instrument Panel）
 
-> **LOGIC:** When building a specific page, first check `design-system/opscabin/pages/[page-name].md`.
-> If that file exists, its rules **override** this Master file. If not, strictly follow the rules below.
+> **LOGIC:** 落地某个页面前，先读 `design-system/opscabin/pages/[page].md`；页面文件与本文冲突时，以页面文件为准。
 >
-> **校正说明：** 本文件由 ui-ux-pro-max 技能生成后人工校正（2026-10-10）。技能自动检索命中的风格为 Modern Dark，
-> 但其自动配色候选与风格条目不一致（生成了一版浅底蓝板），且产品定位（Windows 系统工具、深色仪表盘、常驻托盘）
-> 明确要求深色为设计基准。故色板与组件规范部分按「Modern Dark」风格条目人工定版，双主题完整给出。
+> **版本说明：** v1（Modern Dark + 信号绿）被判为「太像通用后台」，2026-10-10 整体推翻。
+> v2 的设计论点一句话：**这不是一块仪表盘（dashboard），是一台仪表（instrument）**——产品名里的「舱」就是驾驶舱。
 
-**Project:** 运维舱 OpsCabin
-**Category:** Developer System Utility / Desktop Dashboard（Windows 桌面，深色为设计基准）
-**Design Dials:** Variance 5/10 (Balanced / Modern) | Motion 4/10 (Standard) | Density 8/10 (Dense / Dashboard)
+## 三块基石（改任何样式前先读）
 
----
+1. **颜色是信号，不是装饰。** 全站没有品牌色、没有蓝。一切交互动作走石墨墨阶（`btn` 系）；绿 / 黄 / 红只表示状态与风险，且永远同时有文字（色盲双通道）。被选中用中性钢灰 `sel`。
+2. **数据是读数。** 数字、端口号、地址、路径、时间戳、微标签一律等宽 `font-mono`（B612 Mono，内嵌 woff2）+ `tabular-nums`，成列右对齐。中文落系统黑体。
+3. **结构是仪器面板。** `Plate`（整块面板）+ `Bay`（格）用 1px 发丝线拼合，不是漂浮的圆角卡片。四种基本零件：仪表灯 `Lamp`、分段仪表条 `SegBar`、拨档 `Rocker`、端口雷达 `Scope`。
 
-## Global Rules
-
-### Color Palette
-
-**深色（设计基准）：**
-
-| Role | Hex | CSS Variable | 用途 |
-|------|-----|--------------|------|
-| Background | `#0F172A` | `--bg` | 窗口底 |
-| Panel | `#1E293B` | `--panel` | 侧栏、卡片 |
-| Panel 2 | `#272F42` | `--panel-2` | 浮起面板、抽屉、hover 底 |
-| Border | `#334155` | `--line` | 分隔线、边框 |
-| Foreground | `#F8FAFC` | `--fg` | 主文字 |
-| Dim | `#94A3B8` | `--dim` | 次级文字、单位 |
-| Signal | `#22C55E` | `--signal` | 活跃/安全/关键动作（全站唯一强调色） |
-| Warn | `#F59E0B` | `--warn` | 警告：磁盘将满、关注端口变化 |
-| Danger | `#EF4444` | `--danger` | 危险动作与冲突：删除、端口冲突 |
-
-**浅色（跟随系统时启用）：**
-
-| Role | Hex | CSS Variable |
-|------|-----|--------------|
-| Background | `#F1F5F9` | `--bg` |
-| Panel | `#FFFFFF` | `--panel` |
-| Panel 2 | `#F8FAFC` | `--panel-2` |
-| Border | `#E2E8F0` | `--line` |
-| Foreground | `#0F172A` | `--fg` |
-| Dim | `#64748B` | `--dim` |
-| Signal | `#16A34A` | `--signal` |
-| Warn | `#D97706` | `--warn` |
-| Danger | `#DC2626` | `--danger` |
-
-**颜色纪律（硬规则）：**
-
-- 状态语义：绿=活跃/运行中/安全；琥珀=警告；红=危险动作与冲突。"端口被占用"是中性事实，用墨阶表达，不用红。
-- 全站只有一个强调色（signal 绿），只出现在"当前导航、运行状态灯、关键动作"。
-- 分级（清理安全等级、端口变化程度）用墨的深浅与形状表达，不滥用彩色。
-- 任何状态都不许只靠颜色传达——必须配文字标签或图标（色盲可达）。
-- 正文/背景对比度 ≥4.5:1；次要用 Dim 色，仅用于辅助信息。
-
-### Typography
-
-- **Heading / Body:** Inter（拉丁与数字）；中文落系统黑体栈：`'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI', sans-serif`
-- **数据字体（端口号/PID/文件大小/时间戳）:** 等宽 `'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace`，数值列右对齐成列
-- 桌面应用不引 CDN 字体（离线可用是硬需求）；Inter 以内嵌 woff2 引入，中文交给系统字
-- 正文字号基准 13.5px 上下（桌面工具密度），正文行高 1.5
-
-### Spacing（Density 8/10 — Dense / Dashboard）
-
-| Token | Value | Usage |
-|-------|-------|-------|
-| `--space-xs` | `2px` | 紧贴间隙 |
-| `--space-sm` | `4px` | 图标间隙、行内间距 |
-| `--space-md` | `8px` | 标准内边距、表格行内 |
-| `--space-lg` | `12px` | 区块内边距 |
-| `--space-xl` | `16px` | 大区块间距 |
-| `--space-2xl` | `24px` | 分区间距 |
-| `--space-3xl` | `32px` | 页面级留白 |
-
-### Shadow Depths
-
-| Level | Value | Usage |
-|-------|-------|-------|
-| `--shadow-sm` | `0 1px 2px rgba(0,0,0,0.05)` | 浅色下的轻微抬升 |
-| `--shadow-md` | `0 4px 6px rgba(0,0,0,0.1)` | 浅色下的卡片 |
-| `--shadow-lg` | `0 10px 15px rgba(0,0,0,0.1)` | 浅色下的对话框 |
-
-**深色下阴影是黑投黑、等于没投**——"抬起来"靠"比底色亮一档 + 一道亮边"（`--panel-2` + `--line`）。
+**Design Dials:** Variance 6/10（偏仪器的直线与方角） | Motion 3/10（克制：只做状态与进行中） | Density 8/10（桌面工具密度）
 
 ---
 
-## Component Specs
+## Color Palette
 
-### Buttons
+**昼间（浅色）· 冷钢工作台：**
 
-```css
-/* 主按钮 —— signal 绿底、深绿字（对比度合格） */
-.btn-primary {
-  background: #22C55E;
-  color: #052E16;
-  padding: 8px 16px;
-  border-radius: 8px;
-  font-weight: 600;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-.btn-primary:hover { filter: brightness(1.08); }
+| Role | Hex | 变量 | 用途 |
+|------|-----|------|------|
+| Canvas | `#E7EBED` | `--bg` | 窗口底 |
+| Panel | `#FFFFFF` | `--panel` | 面板格（bay） |
+| Panel 2 | `#F2F4F5` | `--panel-2` | 表头 / 凹槽 / hover 底 |
+| Hairline | `#D5DBDF` | `--line` | 发丝分隔线 |
+| Hairline 2 | `#BAC4CA` | `--line-2` | 外框、输入框边、强调线 |
+| Ink | `#14181B` | `--fg` | 主文字、石墨按钮底 |
+| Dim | `#5A646C` | `--dim` | 次级文字（对比度 ≥5:1） |
+| Faint | `#8B959C` | `--faint` | 刻度、最弱提示（不承载正文） |
+| Selected | `#DEE6EB` | `--sel` | 当前导航底、选中行底 |
+| OK ink / soft | `#1A8A4B` / `#3FB56D` | `--ok` / `--ok-soft` | 文字用 ink；灯与色块用 soft |
+| Warn ink / soft | `#9A6708` / `#E0A22A` | `--warn` / `--warn-soft` | 注意：磁盘将满、风险条目 |
+| Danger ink / soft | `#BC3B22` / `#E2543A` | `--danger` / `--danger-soft` | 危险动作、永久删除、冲突 |
 
-/* 次按钮 —— 幽灵样式 */
-.btn-ghost {
-  background: transparent;
-  color: inherit;
-  border: 1px solid var(--line);
-  padding: 8px 16px;
-  border-radius: 8px;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-.btn-ghost:hover { background: var(--panel-2); }
+**夜间 · 驾驶舱夜航（近黑蓝灰，非纯黑）：**
 
-/* 危险按钮 —— 红描边，hover 实心；点击必须过确认对话框 */
-.btn-danger {
-  background: transparent;
-  color: var(--danger);
-  border: 1px solid var(--danger);
-  padding: 8px 16px;
-  border-radius: 8px;
-  transition: all 200ms ease;
-  cursor: pointer;
-}
-.btn-danger:hover { background: rgba(239, 68, 68, 0.12); }
-```
+| Role | Hex | 变量 |
+|------|-----|------|
+| Canvas | `#0D1114` | `--bg` |
+| Panel | `#151A1E` | `--panel` |
+| Panel 2 | `#1C2226` | `--panel-2` |
+| Hairline / 2 | `#262E33` / `#39434A` | `--line` / `--line-2` |
+| Ink | `#E7ECEF` | `--fg` |
+| Dim / Faint | `#98A3AB` / `#6C777F` | `--dim` / `--faint` |
+| Selected | `#1E272D` | `--sel` |
+| OK / Warn / Danger | `#4CC97F` / `#E2AE4E` / `#F4694F` | `--ok` / `--warn` / `--danger` |
 
-### Cards / 面板
+**动作墨阶：** 主按钮 = 石墨实底（昼 `#1B2227` 底 + `#F3F6F7` 字；夜反相为亮底深字）。危险按钮才用红（`--btn-danger`）。
+**夜间唯一允许的光：** `.lamp` 的 7px 辉光。其他一切不发光、不投影（浮层用边线分层）。
+**主题机制（硬约束）：** 只有 `prefers-color-scheme`（主进程 `nativeTheme.themeSource`），渲染层不持有主题状态。
 
-```css
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 16px;
-  /* 深色下不投阴影，靠边线分层 */
-}
-```
+## Typography
 
-### Inputs
+- **中文 / 拉丁 UI：** `'Microsoft YaHei UI', 'Microsoft YaHei', 'Segoe UI', sans-serif`
+- **数据（数字/端口/地址/路径/时间/微标签）：** `'B612 Mono', Consolas, 'Cascadia Mono', 'Microsoft YaHei UI', ui-monospace, monospace`
+  —— B612 由空客为驾驶舱显示屏委托设计，这就是「舱」的字面来源；内嵌于应用，离线可用。
+- 工具类：`.eyebrow`（10.5px 等宽大写 + 0.12em 字距，配 `text-faint`/`text-dim`）、`.num`（等宽 + tabular）。
+- 字号阶梯：`10.5` 微标签 · `11` 辅助 · `12` 表格/按钮 · `12.5` 表格正文 · `13` 正文/按钮 · `15` 页标题 · `24` 大字读数。**任何位置不得 <10.5px。**
+- 数字永远成列右对齐；单位与数字之间空一格（`12.5 GB`）。
 
-```css
-.input {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 8px 12px;
-  font-size: 13.5px;
-  transition: border-color 200ms ease;
-}
-.input:focus-visible {
-  border-color: var(--signal);
-  outline: 2px solid color-mix(in srgb, var(--signal) 35%, transparent);
-  outline-offset: 1px;
-}
-```
+## 四种基本零件（`@/components/instrument/*`）
 
-### Modals / 对话框
+| 零件 | 文件 | 规则 |
+|------|------|------|
+| `Lamp` 仪表灯 | `lamp.tsx` | 7px 圆点；状态 `ok/warn/danger/idle/ink`；进行中用 `pulse`。**灯旁必须有文字**，不许只靠颜色。 |
+| `SegBar` 分段条 | `seg-bar.tsx` | 离散 LED 格（`segments` 26–32），不是连续进度条；`tone` 由 `freeTone()`（磁盘按剩余 5/10GB）或 `loadTone()`（负载 80/92%）决定；`sweep` 只在扫描进行中用。 |
+| `Plate` + `Bay` | `plate.tsx` | 页面分区必须用 Plate（`grid gap-px bg-line`，整板 6px 圆角 + `line-2` 外框）+ Bay（`bg-panel`，含 `eyebrow`/`title`/`aside`）。**不要再写 `rounded-[10px] border bg-panel` 的漂浮卡片。** |
+| `Rocker` 拨档 | `rocker.tsx` | 2–4 档的横向档位开关（主题、协议筛选、计划模式）；活动档 = `bg-panel` + `line-2` 内描边。 |
+| `Scope` 端口雷达 | `scope.tsx` | 唯一的「签名」动效：amber 扫描线 4.5s 一圈 + 目标亮点。仅端口页使用。 |
 
-```css
-.modal-overlay { background: rgba(0, 0, 0, 0.6); }
-.modal {
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 20px;
-  max-width: 480px;
-  /* 危险确认对话框：标题写明动作与对象，正文给"将删除什么、多少空间"的事实 */
-}
-```
+## 组件规范
 
----
-
-## Style Guidelines
-
-**Style:** Modern Dark（技能 style 库命中条目）
-
-**Keywords:** dark mode, cinematic, ambient light, glassmorphism, deep black, indigo, glow, blur, atmospheric, premium, layered
-
-**Best For:** Developer tools, pro productivity apps, fintech/trading dashboards, media/streaming platforms, AI tool interfaces
-
-**桌面工具落地注意（人工补充）：**
-
-- 玻璃拟态/blur 在 Electron 里是真实性能成本，只在对话框 overlay 等低频场景少量使用；常驻面板一律实底
-- `scale press 0.97 → 1.0`、`cubic-bezier(0.16,1,0.3,1)` 缓动可以用，但持续动效必须支持 `prefers-reduced-motion`
-- 避免纯黑 `#000000`（OLED smear），底色用 `#0F172A`
-
-### Page Pattern
-
-**Pattern Name:** Real-Time / Operations
-
-- 面向运维/监控场景：首屏回答"现在什么状况"，实时数值优先于叙述文本
-- 关键指标前置（磁盘余量、关注端口状态灯、资源读数），操作入口挨着数据（就地处置）
-- 对应用内页面：技能生成的 landing 版式仅作气质参考，布局按桌面工具骨架（侧栏 + 主区）执行
-
----
+- **Button**：`default` 石墨实底（= 关键动作：开始扫描、清理选中项）；`outline`（次要）；`ghost`（弱操作）；`destructive` 只在不可逆动作（永久删除 / 结束进程 / 重置设置）。高度默认 32 / `sm` 28 / `xs` 24。圆角 4px。
+- **Badge（chip）**：`ok` / `warn` / `destructive` 三个语义档（`.chip-*`），用于风险等级、协议、状态标签；高度 19px，圆角 3px。
+- **Table**：表头 = `panel-2` 底 + 11px dim 微标签；行高 32–36px，hover `panel-2/70`；数字列 `.num` 右对齐；路径列等宽 + truncate，别换行撑高。
+- **Tabs**：档位开关观感（与 Rocker 同构），活动档白底内描边；保留 radix 行为（mousedown 激活）。
+- **Switch / Checkbox**：选中 = 石墨（昼）/ 亮底（夜）；Checkbox 是 4px 小方角，不用圆点。
+- **Dialog / AlertDialog**：`panel` 实底 + `line-2` 边 + 6px 圆角；标题 14px 粗体，左上角带 `eyebrow`；危险确认必须有后果说明。遮罩 `rgba(13,17,20,.5)`。
+- **Toast（sonner）**：`panel` 底 + 边线，12.5px；成功文案用完成态动词（「已清理 3 项」）。
 
 ## Motion
 
-**Stagger List** (Standard) — Trigger: load or scroll | Duration: 300-450ms | Easing: `cubic-bezier(0.16,1,0.3,1)`
+- 状态切换 150–200ms；**数字变化不做动画**（仪表读数瞬变）。
+- 扫描进行中：`SegBar sweep` + 顶栏读数；雷达扫描线常驻（这是它存在的意义）。
+- `prefers-reduced-motion`：关闭全部动画（含扫描线）。
+- 禁止：入场 stagger 雨、hover 位移、scale press、装饰性循环动效（除雷达扫描线）。
 
-- 卡片阵（关注端口卡片、磁盘分区卡）入场可用 stagger；**数据表格不要回弹/overshoot**，密集信息区只做 150-200ms 淡入
-- 动效只传达意义（状态变化、层级出现），不做纯装饰动画
-- 遵守 `prefers-reduced-motion`：关闭位移与缩放，只保留状态切换
+## 文案纪律（界面上的字也是设计材料）
 
----
+- 从用户侧命名：说「关注端口」，不说「watchlist 配置」。
+- 主动语态、按钮名贯穿流程：「开始扫描」→ toast「扫描完成 · 找到 7 项」。
+- 空态是邀请：说清楚「这里会有什么 + 怎么让它出现」。
+- 错误给方向：说清发生了什么 + 怎么修，不卖萌、不道歉成瘾。
 
-## Anti-Patterns (Do NOT Use)
+## Anti-Patterns（不要用）
 
-- ❌ 慢更新（实时数据必须及时刷新，轮询周期要可见于界面）
-- ❌ 无自动化（能自动完成的事不要让用户手工重复）
-
-### Additional Forbidden Patterns
-
-- ❌ **Emojis as icons** — 图标一律 SVG（Lucide）
-- ❌ **Missing cursor:pointer** — 可点击元素必须有手型光标
-- ❌ **Layout-shifting hovers** — hover 不许引起布局位移
-- ❌ **Low contrast text** — 正文对比度 ≥4.5:1
-- ❌ **Instant state changes** — 状态切换必须有过渡（150-300ms）
-- ❌ **Invisible focus states** — 键盘焦点必须可见
-- ❌ **静默的成功** — 任何操作完成必须有反馈（toast/状态变化）
-- ❌ **无确认的危险操作** — 删除、结束进程必须二次确认并说明后果
-- ❌ **单行操作** — 批量场景（清理多个条目）必须支持多选与批量动作
-
----
+- ❌ 品牌蓝 / 装饰性彩色（颜色只能来自信号语义）
+- ❌ 漂浮圆角卡片堆叠（用 Plate + Bay）
+- ❌ 连续圆角进度条（用 `SegBar`；唯一例外：扫描进度 `Progress`）
+- ❌ emoji 图标（一律 Lucide SVG）
+- ❌ hover 引起布局位移、无 `cursor-pointer`、不可见焦点
+- ❌ 正文 <10.5px、灰压灰（正文对比度 <4.5:1）
+- ❌ 只靠颜色传达状态（必须配文字）
+- ❌ 危险操作无确认、操作完成无反馈
 
 ## Pre-Delivery Checklist
 
-Before delivering any UI code, verify:
-
-- [ ] 无 emoji 图标，全部 Lucide SVG
-- [ ] 可点击元素均有 `cursor-pointer`
-- [ ] hover/active 都有 150-300ms 过渡动画
-- [ ] 两种主题下正文对比度 ≥4.5:1
-- [ ] 键盘导航焦点可见（focus-visible 环）
-- [ ] 遵守 `prefers-reduced-motion`
-- [ ] 危险操作过确认对话框，并给出具体后果信息
-- [ ] 操作完成有成功反馈（toast 或状态标记）
-- [ ] 长列表（扫描结果/端口表）虚拟化或分页，无一次性渲染万条
-- [ ] 表格无横向溢出（或给滚动容器），数字列右对齐
-- [ ] 状态不只靠颜色（配文字/图标）
-- [ ] 窗口 960px 宽下不出现横向滚动
+- [ ] 没有蓝、没有装饰色；状态色全部带文字
+- [ ] 所有数字/时间/地址是 `.num`，成列右对齐
+- [ ] 分区用 Plate+Bay，不再有旧卡片样式
+- [ ] 扫描进行中能看到 sweep；结束即停
+- [ ] 两主题下正文 ≥4.5:1；键盘焦点可见；`prefers-reduced-motion` 生效
+- [ ] 危险操作过确认，说明后果；操作完成有 toast 或状态变化
+- [ ] 960px 窗口宽下无横向滚动，长表格可滚
+- [ ] 所有 `data-testid` 与既有文案契约未破坏（见各 pages/*.md 的「e2e 契约」节）

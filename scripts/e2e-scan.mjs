@@ -282,7 +282,14 @@ if (!page) {
   const rtt = Date.now() - pingStart
   check('扫描期间渲染进程响应即时（<150ms）', rtt < 150, `rtt=${rtt}ms`)
 
-  const progressCount = await evaluate(cdp, 'window.__scanProgress.length')
+  // 第一条进度推送可能晚于 350ms 才到（worker 启动 + 测量阶段）：
+  // 在扫描仍在进行的前提下轮询等待，最多 5 秒
+  let progressCount = 0
+  for (let i = 0; i < 20; i++) {
+    progressCount = Number(await evaluate(cdp, 'window.__scanProgress.length'))
+    if (progressCount >= 1) break
+    await wait(250)
+  }
   check('收到扫描进度推送', progressCount >= 1, `count=${progressCount}`)
   const lastProgress = JSON.parse(
     await evaluate(

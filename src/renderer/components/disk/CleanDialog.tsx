@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import type { JSX } from 'react'
 import { toast } from 'sonner'
+import { AlertTriangle } from 'lucide-react'
 import type { CleanRequestItem, CleanResult } from '@shared/disk'
 import { formatBytes } from '@shared/format'
 import {
@@ -13,7 +14,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle
 } from '@/components/ui/alert-dialog'
-import { Checkbox } from '@/components/ui/checkbox'
+import { Rocker } from '@/components/instrument/rocker'
+import { cn } from '@/lib/utils'
 
 interface Props {
   open: boolean
@@ -22,7 +24,7 @@ interface Props {
   onDone: (result: CleanResult) => void
 }
 
-/** 清理确认：讲清「删什么、多少、去哪」，永久删除是独立选项且文案更强 */
+/** 清理确认：讲清「删什么、多少、去哪」；永久删除是独立档位，选中后给出后果说明 */
 export function CleanDialog({ open, items, onOpenChange, onDone }: Props): JSX.Element {
   const [permanent, setPermanent] = useState(false)
   const [running, setRunning] = useState(false)
@@ -61,33 +63,62 @@ export function CleanDialog({ open, items, onOpenChange, onDone }: Props): JSX.E
         if (!running) onOpenChange(next)
       }}
     >
-      <AlertDialogContent data-testid="clean-dialog">
+      <AlertDialogContent data-testid="clean-dialog" className="border-line-2 shadow-none">
         <AlertDialogHeader>
-          <AlertDialogTitle>清理 {items.length} 项</AlertDialogTitle>
+          <AlertDialogTitle className="text-[14px] font-bold tracking-[0.01em]">
+            清理 {items.length} 项
+          </AlertDialogTitle>
           <AlertDialogDescription className="text-[12px] leading-relaxed">
             预计释放{' '}
-            <span className="font-mono font-semibold text-fg">{formatBytes(totalBytes)}</span>。
-            {permanent ? '永久删除 —— 不进回收站，无法恢复。' : '删除进回收站，之后可以还原。'}
+            <span className="num font-semibold text-fg">{formatBytes(totalBytes)}</span>
+            {permanent ? '。永久删除不进回收站，无法恢复。' : '。删除进回收站，之后可以还原。'}
           </AlertDialogDescription>
         </AlertDialogHeader>
 
-        <label className="flex cursor-pointer items-center gap-2 rounded-md border border-line bg-panel-2 px-3 py-2 text-[12px]">
-          <Checkbox
-            checked={permanent}
-            disabled={running}
-            onCheckedChange={(value) => setPermanent(value === true)}
+        <ul className="max-h-[240px] overflow-auto rounded-md border border-line">
+          {items.map((item) => (
+            <li
+              key={item.path}
+              className="flex items-baseline gap-3 border-b border-line px-2.5 py-1.5 text-[11.5px] last:border-b-0"
+            >
+              <span className="num min-w-0 flex-1 truncate text-dim" title={item.path}>
+                {item.path}
+              </span>
+              <span className="num shrink-0">{formatBytes(item.bytes)}</span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Rocker
+            aria-label="清理方式"
+            size="sm"
+            value={permanent ? 'permanent' : 'recycle'}
+            onChange={(value) => setPermanent(value === 'permanent')}
+            className={cn(running && 'pointer-events-none opacity-45')}
+            options={[
+              { value: 'recycle', label: '删除到回收站' },
+              { value: 'permanent', label: '永久删除' }
+            ]}
           />
-          永久删除（不进回收站）
-        </label>
+          <span className="text-[11px] text-dim">
+            {permanent ? '不进回收站，文件立即消失' : '可以从回收站还原'}
+          </span>
+        </div>
+
+        {permanent && (
+          <div className="chip-danger flex items-start gap-2 rounded-md border p-2 text-[11.5px] leading-relaxed">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+            <span>永久删除不可撤销：这些文件不会进回收站，删掉就找不回来了。</span>
+          </div>
+        )}
 
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={running} className="cursor-pointer">
-            取消
-          </AlertDialogCancel>
+          <AlertDialogCancel disabled={running}>取消</AlertDialogCancel>
           <AlertDialogAction
             disabled={running}
+            variant={permanent ? 'destructive' : 'default'}
             data-testid="clean-confirm"
-            className="cursor-pointer bg-destructive text-destructive-foreground hover:bg-destructive/90"
             onClick={(event) => {
               event.preventDefault()
               void run()

@@ -1,12 +1,42 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { UpdateState } from '@shared/update'
+import { Lamp } from '@/components/instrument/lamp'
+import type { LampState } from '@/components/instrument/lamp'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 
 interface Props {
   autoCheck: boolean
   onAutoCheckChange: (value: boolean) => void
+}
+
+interface StatusMark {
+  text: string
+  lamp: LampState
+  pulse?: boolean
+}
+
+/** 更新状态 → 仪表灯 + 文字（颜色永远配文字，色盲也能读） */
+function statusMark(status: UpdateState['status'], checkedAt: number): StatusMark {
+  switch (status) {
+    case 'checking':
+      return { text: '正在检查', lamp: 'idle', pulse: true }
+    case 'available':
+      return { text: '发现新版本', lamp: 'warn' }
+    case 'downloading':
+      return { text: '正在下载', lamp: 'ink', pulse: true }
+    case 'downloaded':
+      return { text: '已下载，可以安装', lamp: 'ok' }
+    case 'error':
+      return { text: '检查失败', lamp: 'danger' }
+    case 'unsupported':
+      return { text: '不支持自动更新', lamp: 'idle' }
+    default:
+      return checkedAt > 0
+        ? { text: '已是最新', lamp: 'ok' }
+        : { text: '尚未检查', lamp: 'idle' }
+  }
 }
 
 /** 软件更新：检查 / 下载 / 安装三段分开，安装永远由用户点 */
@@ -27,6 +57,7 @@ export function UpdateSection({ autoCheck, onAutoCheckChange }: Props): JSX.Elem
   }, [])
 
   const status = state?.status ?? 'idle'
+  const mark = statusMark(status, state?.checkedAt ?? 0)
 
   const check = async (): Promise<void> => {
     setBusy(true)
@@ -49,11 +80,13 @@ export function UpdateSection({ autoCheck, onAutoCheckChange }: Props): JSX.Elem
   }
 
   return (
-    <div className="space-y-3 text-[12px]" data-testid="update-section">
-      <div className="flex items-center justify-between gap-4">
+    <div data-testid="update-section">
+      <div className="flex min-h-[38px] items-start justify-between gap-4 border-b border-line px-3.5 py-2">
         <div className="min-w-0">
-          <div>
-            当前版本 <span className="font-mono text-[11px]">{state?.current ?? '…'}</span>
+          <div className="flex items-center gap-2">
+            <Lamp state={mark.lamp} pulse={mark.pulse} />
+            <span className="text-[12.5px]">{mark.text}</span>
+            <span className="num text-[11.5px] text-dim">v{state?.current ?? '…'}</span>
           </div>
           {state?.message && (
             <div
@@ -91,7 +124,7 @@ export function UpdateSection({ autoCheck, onAutoCheckChange }: Props): JSX.Elem
           )}
           <Button
             size="sm"
-            variant="outline"
+            variant="ghost"
             data-testid="update-release-page"
             onClick={() => void window.opsCabin.openReleasePage()}
           >
@@ -100,16 +133,17 @@ export function UpdateSection({ autoCheck, onAutoCheckChange }: Props): JSX.Elem
         </div>
       </div>
 
-      <div className="flex items-center justify-between gap-4 border-t border-line pt-3">
-        <div>
-          <div>每天自动检查一次新版本</div>
-          <div className="text-[11px] text-dim">只检查并提示；下载与安装始终由你手动触发。</div>
+      <div className="flex min-h-[38px] items-center justify-between gap-4 px-3.5 py-2">
+        <div className="min-w-0">
+          <div className="text-[12.5px]">每天自动检查一次新版本</div>
+          <div className="mt-0.5 text-[11px] leading-relaxed text-dim">
+            只检查并提示；下载与安装始终由你手动触发。
+          </div>
         </div>
         <Switch
           checked={autoCheck}
           onCheckedChange={onAutoCheckChange}
           data-testid="auto-update-switch"
-          className="cursor-pointer"
         />
       </div>
     </div>

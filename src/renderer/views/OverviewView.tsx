@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { VolumeInfo } from '@shared/disk'
 import type { PortChange, PortsSnapshot, WatchItem } from '@shared/ports'
+import { Bay, Plate } from '@/components/instrument/plate'
 import { AlertFeed } from '@/components/overview/AlertFeed'
 import { MetricsPanel } from '@/components/overview/MetricsPanel'
 import { PartitionBars } from '@/components/overview/PartitionBars'
@@ -11,7 +12,7 @@ interface Props {
   onNavigate: (view: 'disk' | 'ports') => void
 }
 
-/** 总览：一屏回答「现在什么状况」—— 每个面板都是入口，不是信息终点 */
+/** 总览：一屏回答「现在什么状况」—— 信号条报警、每个 bay 都是入口 */
 export function OverviewView({ onNavigate }: Props): JSX.Element {
   const [volumes, setVolumes] = useState<VolumeInfo[]>([])
   const [snapshot, setSnapshot] = useState<PortsSnapshot | null>(null)
@@ -57,22 +58,43 @@ export function OverviewView({ onNavigate }: Props): JSX.Element {
 
   return (
     <div className="h-full min-h-0 overflow-auto p-4" data-testid="overview-view">
-      <div className="space-y-4">
-        <PartitionBars volumes={volumes} onOpenDisk={() => onNavigate('disk')} />
+      <div className="flex flex-col gap-3">
+        <AlertFeed
+          volumes={volumes}
+          changes={changes}
+          onOpenDisk={() => onNavigate('disk')}
+          onOpenPorts={() => onNavigate('ports')}
+        />
 
-        <div className="grid grid-cols-[minmax(0,3fr)_minmax(0,2fr)] gap-4">
-          <section
-            className="cursor-pointer rounded-[10px] border border-line bg-panel p-4 transition-colors duration-150 hover:border-signal/40"
+        <Plate className="grid-cols-[minmax(0,3fr)_minmax(0,2fr)] max-[880px]:grid-cols-1">
+          <Bay
+            eyebrow="STORAGE"
+            title="磁盘"
+            aside={<span className="text-[10.5px] text-dim">进入磁盘页</span>}
+            tooltip="点击进入磁盘页"
+            onClick={() => onNavigate('disk')}
+            data-testid="partition-bars"
+          >
+            <PartitionBars volumes={volumes} />
+          </Bay>
+          <MetricsPanel />
+        </Plate>
+
+        <Plate>
+          <Bay
+            eyebrow="RADAR · WATCH"
+            title="关注端口"
+            aside={
+              <span className="num text-[10.5px] text-faint">
+                {watchlist.length > 0 ? `${watchlist.length} 个 · 进入端口页` : '进入端口页'}
+              </span>
+            }
+            tooltip="点击进入端口页"
             onClick={() => onNavigate('ports')}
-            title="查看端口页"
             data-testid="overview-watch"
           >
-            <div className="mb-3 flex items-baseline justify-between">
-              <h2 className="text-[13px] font-semibold">关注端口</h2>
-              <span className="text-[10px] text-dim">点击进入端口页</span>
-            </div>
             {watchlist.length === 0 ? (
-              <div className="text-[11px] leading-relaxed text-dim">
+              <div className="py-1 text-[11px] leading-relaxed text-dim">
                 还没有关注任何端口 —— 去端口页给常用的开发端口加个关注。
               </div>
             ) : (
@@ -84,17 +106,8 @@ export function OverviewView({ onNavigate }: Props): JSX.Element {
                 onAdd={() => onNavigate('ports')}
               />
             )}
-          </section>
-
-          <MetricsPanel />
-        </div>
-
-        <AlertFeed
-          volumes={volumes}
-          changes={changes}
-          onOpenDisk={() => onNavigate('disk')}
-          onOpenPorts={() => onNavigate('ports')}
-        />
+          </Bay>
+        </Plate>
       </div>
     </div>
   )

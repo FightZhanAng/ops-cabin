@@ -111,7 +111,8 @@ export async function runSmoke(win: BrowserWindow): Promise<void> {
 
     /* ---- 端口页：必须包含自检自己开的端口 ---- */
     await nav('ports')
-    await wait(2000)
+    // 离开总览后监控器停采，端口页首屏要现采一次；冷启动的进程信息查询可能超过 2 秒
+    await wait(5000)
     smoke(
       'view-ports',
       await run(`({

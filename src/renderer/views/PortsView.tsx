@@ -2,14 +2,15 @@ import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import type { PortChange, PortEntry, PortsSnapshot, WatchItem } from '@shared/ports'
 import { formatClock } from '@shared/format'
+import { Bay, Plate } from '@/components/instrument/plate'
+import { Scope } from '@/components/instrument/scope'
 import { AddWatchDialog } from '@/components/ports/AddWatchDialog'
 import { ChangeTimeline } from '@/components/ports/ChangeTimeline'
 import { PortTable } from '@/components/ports/PortTable'
 import { ProcDialog } from '@/components/ports/ProcDialog'
 import { WatchGrid } from '@/components/ports/WatchGrid'
-import { Separator } from '@/components/ui/separator'
 
-/** 端口页：关注端口卡片阵 + 全部监听端口表 + 变化时间线 */
+/** 端口页：关注端口读数台 + 雷达底座 + 全部监听端口表 + 变化记录右轨 */
 export function PortsView(): JSX.Element {
   const [snapshot, setSnapshot] = useState<PortsSnapshot | null>(null)
   const [watchlist, setWatchlist] = useState<WatchItem[]>([])
@@ -62,40 +63,52 @@ export function PortsView(): JSX.Element {
 
   return (
     <div className="flex h-full min-h-0">
-      <div className="min-w-0 flex-1 overflow-auto px-4 py-3">
-        {/* 关注端口（雷达区） */}
-        <div className="mb-3 flex items-baseline gap-2">
-          <h2 className="text-[13px] font-semibold">关注端口</h2>
-          <span className="text-[10px] text-dim" data-testid="ports-status">
-            {snapshot
-              ? `每 2 秒刷新 · 更新于 ${formatClock(snapshot.at)}`
-              : '正在读取端口…'}
-            {snapshot?.degraded ? ' · 部分进程信息缺失' : ''}
-          </span>
+      <div className="min-w-0 flex-1 overflow-auto p-4">
+        <div className="flex flex-col gap-3">
+          {/* 关注端口读数台 + 雷达底座 */}
+          <Plate className="grid-cols-[minmax(0,1fr)_212px]">
+            <Bay
+              eyebrow="RADAR · WATCH"
+              title="关注端口"
+              hint={
+                <span data-testid="ports-status">
+                  每 2 秒刷新 · 更新于 <span className="num text-fg">
+                    {snapshot ? formatClock(snapshot.at) : '—'}
+                  </span>
+                  {snapshot?.degraded ? ' · 部分进程信息缺失' : ''}
+                </span>
+              }
+            >
+              <WatchGrid
+                watchlist={watchlist}
+                entries={entries}
+                onOpen={setFocus}
+                onRemove={(port) => void removeWatch(port)}
+                onAdd={() => {
+                  setAddSeed(null)
+                  setAddOpen(true)
+                }}
+              />
+            </Bay>
+
+            <Bay eyebrow="SCOPE" pad="none" bodyClassName="bg-panel-2 p-2">
+              <div className="flex justify-center rounded-sm border border-line px-1 py-2">
+                <Scope watchlist={watchlist} entries={entries} />
+              </div>
+            </Bay>
+          </Plate>
+
+          {/* 全部监听端口 */}
+          <Plate>
+            <Bay eyebrow="LISTENERS" title="全部监听端口" pad="none">
+              <PortTable
+                entries={entries}
+                onOpen={setFocus}
+                onToggleWatch={(entry) => void toggleWatch(entry)}
+              />
+            </Bay>
+          </Plate>
         </div>
-
-        <WatchGrid
-          watchlist={watchlist}
-          entries={entries}
-          onOpen={setFocus}
-          onRemove={(port) => void removeWatch(port)}
-          onAdd={() => {
-            setAddSeed(null)
-            setAddOpen(true)
-          }}
-        />
-
-        <Separator className="my-4" />
-
-        {/* 全部监听端口 */}
-        <div className="mb-2 flex items-baseline gap-2">
-          <h2 className="text-[13px] font-semibold">全部监听端口</h2>
-        </div>
-        <PortTable
-          entries={entries}
-          onOpen={setFocus}
-          onToggleWatch={(entry) => void toggleWatch(entry)}
-        />
       </div>
 
       <ChangeTimeline changes={changes} />

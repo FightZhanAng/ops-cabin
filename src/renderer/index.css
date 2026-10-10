@@ -1,90 +1,136 @@
 @import 'tailwindcss';
 
 /*
- * 运维舱设计令牌（Source of Truth：design-system/opscabin/MASTER.md）。
+ * 运维舱 v2 设计令牌 · 仪器面板（Instrument Panel）
+ * Source of Truth：design-system/opscabin/MASTER.md
  *
- * 深色为设计基准，浅色跟随系统。主题只有一套机制：prefers-color-scheme ——
- * 主进程把用户选择灌进 nativeTheme.themeSource，渲染层自动跟着变，
- * 不需要给每个组件发主题状态，也不会出现「JS 还没跑起来时是错的颜色」的闪帧。
- *
- * 强调色纪律：signal 绿只出现在「活跃 / 关键动作」，红只给「危险动作与冲突」，
- * 其余一律用墨阶（bg / panel / panel-2 / line / fg / dim）。
+ * 纪律（三条，改任何样式前先读）：
+ *   1) 颜色是信号，不是装饰 —— 绿 / 黄 / 红只表示状态与风险；一切交互动作走石墨墨阶（btn 系）。
+ *      全站没有品牌蓝；被选中用 sel 中性钢灰。
+ *   2) 数据字体是 B612 Mono（空客驾驶舱仪表字体，内嵌 woff2），中文落 Microsoft YaHei UI。
+ *      所有数字、地址、路径、时间戳、微标签一律等宽 + tabular-nums。
+ *   3) 主题机制不变：只有 prefers-color-scheme 一套机制（主进程把用户选择灌进
+ *      nativeTheme.themeSource），渲染层没有任何主题 JS 状态。
  */
 
 :root {
   color-scheme: light;
 
-  --bg: #f1f5f9;
+  /* 面板阶（昼间：冷钢灰工作台） */
+  --bg: #e7ebed;
   --panel: #ffffff;
-  --panel-2: #f8fafc;
-  --line: #e2e8f0;
-  --fg: #0f172a;
-  --dim: #64748b;
-  --signal: #16a34a;
-  --warn: #d97706;
-  --danger: #dc2626;
+  --panel-2: #f2f4f5;
+  --line: #d5dbdf;
+  --line-2: #bac4ca;
+  --fg: #14181b;
+  --dim: #5a646c;
+  --faint: #6c777f;
+  --sel: #dee6eb;
 
-  --radius: 10px;
+  /* 信号灯：ink = 文字/描边（对比度合格）；soft = 灯与色块（饱和醒目） */
+  --ok: #1a8a4b;
+  --ok-soft: #3fb56d;
+  --warn: #9a6708;
+  --warn-soft: #e0a22a;
+  --danger: #bc3b22;
+  --danger-soft: #e2543a;
+
+  /* 动作墨阶（主按钮 = 石墨实底；夜间模式反相为亮底） */
+  --btn: #1b2227;
+  --btn-hover: #2a3339;
+  --btn-fg: #f3f6f7;
+  --btn-danger: #c23a20;
+  --btn-danger-hover: #a93318;
+  --btn-danger-fg: #ffffff;
+
+  --focus: #14181b;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
 
-    --bg: #0f172a;
-    --panel: #1e293b;
-    --panel-2: #272f42;
-    --line: #334155;
-    --fg: #f8fafc;
-    --dim: #94a3b8;
-    --signal: #22c55e;
-    --warn: #f59e0b;
-    --danger: #ef4444;
+    /* 夜间：驾驶舱夜航（近黑蓝灰，非纯黑） */
+    --bg: #0d1114;
+    --panel: #151a1e;
+    --panel-2: #1c2226;
+    --line: #262e33;
+    --line-2: #39434a;
+    --fg: #e7ecef;
+    --dim: #98a3ab;
+    --faint: #7c878f;
+    --sel: #1e272d;
+
+    --ok: #4cc97f;
+    --ok-soft: #38b36b;
+    --warn: #e2ae4e;
+    --warn-soft: #c9912e;
+    --danger: #f4694f;
+    --danger-soft: #d8543b;
+
+    --btn: #e7ecef;
+    --btn-hover: #ffffff;
+    --btn-fg: #10151a;
+    --btn-danger: #d8543b;
+    --btn-danger-hover: #eb6a50;
+    --btn-danger-fg: #140b07;
+
+    --focus: #e7ecef;
   }
 }
 
 @theme inline {
-  /* 运维舱令牌 → 工具类（bg-bg / text-fg / border-line / text-signal …） */
+  /* 运维舱令牌 → 工具类（bg-panel / border-line-2 / text-warn …） */
   --color-bg: var(--bg);
   --color-panel: var(--panel);
   --color-panel-2: var(--panel-2);
   --color-line: var(--line);
+  --color-line-2: var(--line-2);
   --color-fg: var(--fg);
   --color-dim: var(--dim);
-  --color-signal: var(--signal);
+  --color-faint: var(--faint);
+  --color-sel: var(--sel);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
   --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
   --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-btn: var(--btn);
+  --color-btn-hover: var(--btn-hover);
+  --color-btn-fg: var(--btn-fg);
 
-  /* 字体：拉丁与数字交给系统粗排，中文落系统黑体；数据列一律 font-mono */
+  /* 字体：中文 + 拉丁 UI 落系统；数据一律 font-mono（B612 Mono 已内嵌） */
   --font-sans: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI', sans-serif;
-  --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace;
+  --font-mono: 'B612 Mono', Consolas, 'Cascadia Mono', 'Microsoft YaHei UI', ui-monospace, monospace;
 
-  /* 圆角派生（shadcn 约定：rounded-lg = --radius） */
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  /* 圆角：仪器是方的 —— 全局压平（覆盖 Tailwind 默认刻度） */
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+  --radius-xl: 8px;
+  --radius-2xl: 10px;
 
   /* ---- shadcn 组件桥接层：组件读这些名字，值指回运维舱令牌 ---- */
-  --color-background: var(--bg);
+  --color-background: var(--panel);
   --color-foreground: var(--fg);
   --color-card: var(--panel);
   --color-card-foreground: var(--fg);
-  --color-popover: var(--panel-2);
+  --color-popover: var(--panel);
   --color-popover-foreground: var(--fg);
-  --color-primary: var(--signal);
-  --color-primary-foreground: #052e16;
+  --color-primary: var(--btn);
+  --color-primary-foreground: var(--btn-fg);
   --color-secondary: var(--panel-2);
   --color-secondary-foreground: var(--fg);
   --color-muted: var(--panel-2);
   --color-muted-foreground: var(--dim);
   --color-accent: var(--panel-2);
   --color-accent-foreground: var(--fg);
-  --color-destructive: var(--danger);
-  --color-destructive-foreground: #ffffff;
+  --color-destructive: var(--btn-danger);
+  --color-destructive-foreground: var(--btn-danger-fg);
   --color-border: var(--line);
-  --color-input: var(--line);
-  --color-ring: var(--signal);
+  --color-input: var(--line-2);
+  --color-ring: var(--focus);
 }
 
 @layer base {
@@ -99,8 +145,8 @@
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-sans);
-    font-size: 13.5px;
-    line-height: 1.5;
+    font-size: 13px;
+    line-height: 1.55;
     -webkit-font-smoothing: antialiased;
     /* 窗口级别不滚动，滚动发生在各主区容器里 */
     overflow: hidden;
@@ -108,15 +154,120 @@
 
   /* 键盘焦点必须可见（MASTER：Invisible focus states 是反模式） */
   :focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--signal) 45%, transparent);
+    outline: 2px solid color-mix(in srgb, var(--focus) 55%, transparent);
     outline-offset: 1px;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--fg) 18%, transparent);
+  }
+
+  /* 细滚动条：仪器面板不出现粗灰槽 */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--dim) 32%, transparent);
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    border-radius: 6px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--dim) 52%, transparent);
+    background-clip: padding-box;
   }
 }
 
-/* 扫描进行中的不定进度动画（内部滑块平移；降级动效只保留静态位置） */
 @layer utilities {
+  /* 微标签：拉丁大写 + 字距；中文落在同字号黑体上 */
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 数据字：等宽 + 对齐数位 */
+  .num {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 状态贴片：与仪表灯同源的语义色（文字用 ink 档，对比度合格） */
+  .chip-ok {
+    border-color: color-mix(in srgb, var(--ok) 40%, transparent);
+    background: color-mix(in srgb, var(--ok) 10%, transparent);
+    color: var(--ok);
+  }
+  .chip-warn {
+    border-color: color-mix(in srgb, var(--warn) 42%, transparent);
+    background: color-mix(in srgb, var(--warn) 12%, transparent);
+    color: var(--warn);
+  }
+  .chip-danger {
+    border-color: color-mix(in srgb, var(--danger) 42%, transparent);
+    background: color-mix(in srgb, var(--danger) 10%, transparent);
+    color: var(--danger);
+  }
+
+  /* 仪表灯：颜色由组件用 --lamp 注入；夜间加一层微弱辉光（唯一允许的光） */
+  .lamp {
+    border-radius: 999px;
+    background: var(--lamp, var(--faint));
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.16);
+  }
+  @media (prefers-color-scheme: dark) {
+    .lamp {
+      box-shadow:
+        inset 0 0 0 1px rgb(255 255 255 / 0.1),
+        0 0 7px -1px color-mix(in srgb, var(--lamp, transparent) 60%, transparent);
+    }
+  }
+
+  /* 分段仪表条上的扫描扫掠（仅扫描进行时） */
+  .seg-sweep {
+    animation: ops-seg-sweep 1.5s linear infinite;
+  }
+  .lamp-pulse {
+    animation: ops-lamp-pulse 1.6s ease-in-out infinite;
+  }
+  .scope-sweep {
+    transform-box: view-box;
+    transform-origin: 50% 50%;
+    animation: ops-scope-rotate 4.5s linear infinite;
+  }
   .anim-progress {
     animation: ops-progress-slide 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes ops-seg-sweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+@keyframes ops-lamp-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes ops-scope-rotate {
+  to {
+    transform: rotate(360deg);
   }
 }
 
@@ -133,5 +284,14 @@
   .anim-progress {
     animation: none;
     transform: translateX(150%);
+  }
+  .seg-sweep {
+    display: none;
+  }
+  .lamp-pulse {
+    animation: none;
+  }
+  .scope-sweep {
+    animation: none;
   }
 }

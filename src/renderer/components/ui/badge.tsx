@@ -3,20 +3,20 @@ import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "cn"
 import { Slot } from "radix-ui"
 
+/** 状态贴片：与仪表灯同一套语义色（ok / warn / destructive 对应绿 / 黄 / 红） */
 const badgeVariants = cva(
-  "inline-flex w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-full border border-transparent px-2 py-0.5 text-xs font-medium whitespace-nowrap transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 [&>svg]:pointer-events-none [&>svg]:size-3",
+  "inline-flex h-[19px] w-fit shrink-0 items-center justify-center gap-1 overflow-hidden rounded-[3px] border px-1.5 text-[11px] font-medium leading-none whitespace-nowrap transition-colors duration-150 [&>svg]:pointer-events-none [&>svg]:size-3",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
-        secondary:
-          "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
-        destructive:
-          "bg-destructive text-white focus-visible:ring-destructive/20 dark:bg-destructive/60 dark:focus-visible:ring-destructive/40 [a&]:hover:bg-destructive/90",
-        outline:
-          "border-border text-foreground [a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        ghost: "[a&]:hover:bg-accent [a&]:hover:text-accent-foreground",
-        link: "text-primary underline-offset-4 [a&]:hover:underline",
+        default: "border-transparent bg-btn text-btn-fg",
+        secondary: "border-line bg-panel-2 text-dim",
+        outline: "border-line-2 bg-panel-2 text-dim",
+        ok: "chip-ok",
+        warn: "chip-warn",
+        destructive: "chip-danger",
+        ghost: "border-transparent text-dim hover:bg-panel-2",
+        link: "border-transparent text-fg underline decoration-line-2 underline-offset-4 hover:decoration-fg",
       },
     },
     defaultVariants: {
