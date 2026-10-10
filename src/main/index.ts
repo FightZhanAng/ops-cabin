@@ -1,13 +1,15 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ScanOutcome } from '../shared/disk'
+import type { CleanMode, CleanOutcome, CleanRequestItem, ScanOutcome } from '../shared/disk'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
+import { Cleaner } from './cleaner'
 import { appIconPath, preloadPath } from './paths'
 import { Scanner, parseScanOptions } from './scanner'
 import { SettingsStore } from './settings'
 import { TrayController } from './tray'
+import { listVolumes } from './volumes'
 
 const APP_ID = app.isPackaged ? 'com.tomcato.ops-cabin' : 'com.tomcato.ops-cabin.dev'
 
@@ -23,6 +25,7 @@ let mainWindow: BrowserWindow | null = null
 let tray: TrayController | null = null
 let settingsStore: SettingsStore | null = null
 let scanner: Scanner | null = null
+let cleaner: Cleaner | null = null
 let isQuitting = false
 
 /* ------------------------------------------------------------ 冒烟自检 */
@@ -200,6 +203,21 @@ function togglePanel(): void {
 
 /* ------------------------------------------------------------ IPC */
 
+/** 校验渲染层传来的清理项（路径与字节数都要合理） */
+function parseCleanItems(raw: unknown): CleanRequestItem[] {
+  if (!Array.isArray(raw)) return []
+  const out: CleanRequestItem[] = []
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== 'object') continue
+    const { path, bytes } = entry as Record<string, unknown>
+    if (typeof path !== 'string' || path.length === 0 || path.length > 1024) continue
+    if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) continue
+    out.push({ path, bytes })
+    if (out.length >= 500) break
+  }
+  return out
+}
+
 function registerIpc(): void {
   ipcMain.handle(
     'app:info',
@@ -216,6 +234,20 @@ function registerIpc(): void {
     isQuitting = true
     app.quit()
   })
+  ipcMain.handle('app:show-in-folder', (_event, path: unknown) => {
+    if (typeof path === 'string' && path.length > 0 && path.length <= 1024) {
+      shell.showItemInFolder(path)
+    }
+  })
+  ipcMain.handle('app:pick-directory', async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return null
+    const result = await dialog.showOpenDialog(mainWindow, {
+      title: '选择要扫描大文件的目录',
+      properties: ['openDirectory']
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
+  })
 
   ipcMain.handle('settings:get', () => settingsStore?.settings ?? null)
   ipcMain.handle('settings:update', (_event, patch: unknown) => {
@@ -228,17 +260,35 @@ function registerIpc(): void {
     return applied
   })
 
-  /* 磁盘扫描 */
-  ipcMain.handle('scan:start', (_event, raw: unknown): Promise<ScanOutcome> => {
+  /* 磁盘扫描与清理 */
+  ipcMain.handle('scan:start', async (_event, raw: unknown): Promise<ScanOutcome> => {
     if (!scanner) {
-      return Promise.resolve({ ok: false, cancelled: false, error: '扫描器未就绪' })
+      return { ok: false, cancelled: false, error: '扫描器未就绪' }
     }
-    return scanner.start(
+    const outcome = await scanner.start(
       parseScanOptions(raw),
       settingsStore?.settings.whitelist ?? []
     )
+    // 扫描结果同时登记给清理器：clean:run 只允许删除这份结果里的路径
+    if (outcome.ok) {
+      cleaner?.registerScanned(outcome.result.groups.flatMap((g) => g.items.map((i) => i.path)))
+    }
+    return outcome
   })
   ipcMain.handle('scan:cancel', () => scanner?.cancel())
+
+  ipcMain.handle('clean:run', (_event, rawItems: unknown, rawMode: unknown): Promise<CleanOutcome> => {
+    if (!cleaner) return Promise.resolve({ ok: false, error: '清理器未就绪' })
+    const mode: CleanMode = rawMode === 'permanent' ? 'permanent' : 'recycle'
+    return cleaner.run(
+      parseCleanItems(rawItems),
+      mode,
+      settingsStore?.settings.whitelist ?? []
+    )
+  })
+
+  /* 分区 */
+  ipcMain.handle('volumes:list', () => listVolumes())
 }
 
 /* ------------------------------------------------------------ 启动 */
@@ -271,6 +321,7 @@ if (!gotLock) {
         }
       }
     })
+    cleaner = new Cleaner()
 
     registerIpc()
     mainWindow = createMainWindow()

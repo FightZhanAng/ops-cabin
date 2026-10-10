@@ -1,4 +1,5 @@
 import { utilityProcess, type UtilityProcess } from 'electron'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { ScanGroupKey, ScanOptions, ScanOutcome, ScanProgress } from '../../shared/disk'
 import {
@@ -115,7 +116,14 @@ export class Scanner {
 function buildTask(options: ScanOptions, whitelist: string[]): WorkerTask {
   const groups = options.groups ?? ['safe', 'devCaches']
   const exclude = whitelist.map((p) => normalizeForCompare(p)).filter((p) => p.length > 0)
-  const roots = groups.includes('largeFiles') ? (options.largeFileRoots ?? []) : []
+  // 大文件组没给根目录时默认扫用户主目录（「扫描主目录」按钮的语义）
+  let roots: string[] = []
+  if (groups.includes('largeFiles')) {
+    roots =
+      options.largeFileRoots && options.largeFileRoots.length > 0
+        ? options.largeFileRoots
+        : [homedir()]
+  }
   return {
     targets: resolveTargets(groups).filter((t) => !isExcluded(t.path, exclude)),
     largeFileRoots: roots,

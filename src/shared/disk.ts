@@ -57,8 +57,49 @@ export type ScanOutcome =
 export interface ScanOptions {
   /** 要扫描的分组；缺省为 safe + devCaches */
   groups?: ScanGroupKey[]
-  /** 大文件扫描的根目录（largeFiles 组使用；不传则跳过该组） */
+  /** 大文件扫描的根目录（largeFiles 组使用；不传时主进程会默认用用户主目录） */
   largeFileRoots?: string[]
   /** 大文件阈值（字节），缺省 100MB */
   largeFileMinBytes?: number
+}
+
+/* ------------------------------------------------------------ 清理 */
+
+export type CleanMode = 'recycle' | 'permanent'
+
+/** 渲染层请求清理的一项 */
+export interface CleanRequestItem {
+  path: string
+  /** 扫描时记录的字节数（用于汇总释放量） */
+  bytes: number
+}
+
+export interface CleanFailure {
+  path: string
+  error: string
+}
+
+export interface CleanResult {
+  at: number
+  mode: CleanMode
+  /** 成功删除的项数 */
+  succeeded: number
+  failed: CleanFailure[]
+  /** 释放字节（按扫描值求和，仅含成功项） */
+  freedBytes: number
+  /** 确认已不在磁盘上的路径（成功删除 + 本来就不存在）——界面据此把行移除 */
+  removed: string[]
+}
+
+/** 清理调用的结果 */
+export type CleanOutcome = { ok: true; result: CleanResult } | { ok: false; error: string }
+
+/* ------------------------------------------------------------ 分区 */
+
+export interface VolumeInfo {
+  /** 盘符，如 "C:" */
+  name: string
+  used: number
+  free: number
+  total: number
 }

@@ -112,3 +112,26 @@
     outline-offset: 1px;
   }
 }
+
+/* 扫描进行中的不定进度动画（内部滑块平移；降级动效只保留静态位置） */
+@layer utilities {
+  .anim-progress {
+    animation: ops-progress-slide 1.4s ease-in-out infinite;
+  }
+}
+
+@keyframes ops-progress-slide {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(430%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-progress {
+    animation: none;
+    transform: translateX(150%);
+  }
+}

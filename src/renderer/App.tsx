@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { JSX } from 'react'
+import { Toaster } from 'sonner'
 import type { AppInfo } from '@shared/types'
+import { DiskView } from './views/DiskView'
 
 const NAV = [
   { key: 'overview', label: '总览' },
@@ -13,7 +15,7 @@ type NavKey = (typeof NAV)[number]['key']
 
 const PLACEHOLDER: Record<NavKey, string> = {
   overview: '系统资源总览：磁盘分区、关注端口状态灯、CPU / 内存 / 磁盘 IO / 网络。',
-  disk: '磁盘扫描清理：分级垃圾扫描、大文件、重复文件、安全清理（回收站可恢复）。',
+  disk: '',
   ports: '端口雷达：关注端口卡片阵、全部监听端口表、进程处置与变化通知。',
   settings: '设置：白名单、清理计划、通知开关、更新。'
 }
@@ -66,19 +68,27 @@ export function App(): JSX.Element {
       </aside>
 
       {/* 主区 */}
-      <main className="flex-1 overflow-auto">
-        <header className="border-b border-line px-6 py-4">
+      <main className="flex min-w-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center border-b border-line px-6 py-4">
           <h1 className="text-[17px] font-semibold">
             {NAV.find((item) => item.key === view)?.label}
           </h1>
         </header>
-        <section className="p-6">
-          <div className="max-w-2xl rounded-[10px] border border-line bg-panel p-4 text-[13px] leading-relaxed text-dim">
-            {PLACEHOLDER[view]}
-            <div className="mt-2 text-[11px]">骨架就绪 —— 页面内容按里程碑实现。</div>
-          </div>
+        <section className="min-h-0 flex-1">
+          {view === 'disk' ? (
+            <DiskView />
+          ) : (
+            <div className="p-6">
+              <div className="max-w-2xl rounded-[10px] border border-line bg-panel p-4 text-[13px] leading-relaxed text-dim">
+                {PLACEHOLDER[view]}
+                <div className="mt-2 text-[11px]">按里程碑实现中。</div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
+
+      <Toaster theme="system" position="bottom-right" />
     </div>
   )
 }

@@ -74,25 +74,25 @@
 
 ---
 
-## 4. M3 磁盘页（第一个完整闭环）
+## 4. M3 磁盘页（第一个完整闭环）—— 已完成（2026-10-10）
 
-**目标**：扫描 → 勾选 → 预览 → 清理 → 反馈，全流程可用。
-**设计依据**：`design-system/opscabin/pages/disk.md`。
+**产出**：
+- 主进程：
+  - `src/main/powershell.ts`：PowerShell 执行工具（-EncodedCommand 传脚本、UTF-8 输出、超时、无窗口）
+  - `src/main/volumes.ts`：分区列表（Get-PSDrive）
+  - `src/main/cleaner.ts`：清理执行 —— SHFileOperation 静默删除（回收站 / 永久）、三层安全防线、清理历史落盘
+  - `src/main/atomic.ts`：原子写抽为公共函数（settings / cleaner 共用）
+  - IPC：`clean:run` / `volumes:list` / `app:show-in-folder` / `app:pick-directory`
+- 渲染层：
+  - `views/DiskView.tsx` + `components/disk/`（PartitionList / ResultTable / DetailPanel / ScanProgressBar / CleanDialog）
+  - shadcn 第一批：`alert-dialog` `table` `tabs` `checkbox` `progress` `badge` `separator` + sonner Toaster
+  - `shared/format.ts`（formatBytes / formatCount）；「扫描主目录」默认扫用户主目录，「选择目录…」走系统目录选择器
+- 安全设计：`clean:run` 只允许删除本会话最近一次扫描结果中的路径（渲染层被攻破也无法删任意文件）；白名单与系统保护名单二次拦截；默认进回收站
 
-**文件**：
-- 新建 `src/main/cleaner.ts`：清理执行——删除进**回收站**（`trash` 包或 PowerShell Shell.Application）；永久删除独立选项；写清理历史
-- 新建 `src/renderer/views/DiskView.tsx`（替换 App 占位）
-- 新建 `src/renderer/components/disk/`：`PartitionList`（分区占用横条）、`ScanTabs`（安全/开发缓存/大文件）、`ResultTable`（多选 + 排序，虚拟化）、`DetailDrawer`（路径/大小/风险/打开所在目录）、`ScanProgress`（进度 + 当前路径 + 取消）、`CleanConfirmDialog`（AlertDialog：删除什么/多少/去向回收站）
-- shadcn 组件引入（第一批）：`button` `dialog`/`alert-dialog` `table` `tabs` `checkbox` `progress` `sonner`（`pnpm dlx shadcn@latest add ...`）
-- IPC：`scan:start` `scan:cancel` `scan:progress`（推送）`scan:result` `clean:preview` `clean:run` `clean:open-dir`
-
-**交互硬规则（来自技能）**：
-- 危险操作确认；成功必 toast（"已释放 3.2 GB"）；批量多选；表格不横向溢出（滚动容器 + 数字列右对齐）
-
-**验收**：
-- 完整闭环：扫描 → 多选 → 预览 → 清理 → toast + 释放数字
-- 删除内容可在回收站还原；黑名单/白名单保护生效（造一个受保护文件测）
-- 扫描结果 5 千条时表格滚动流畅（虚拟化生效）
+**验收（e2e 34 项全绿，`scripts/e2e-disk.mjs`）**：
+- 伪造路径（未扫描过的系统文件）被拒且未被触碰；白名单路径被拒
+- 回收站删除：2 项成功、字节数正确、**枚举回收站确认可还原**；永久删除成功；重复清理记入 removed 不算失败
+- UI 全流程：磁盘页渲染、tab 切换、扫描出结果行、勾选计数更新、确认对话框（含去向说明）、取消关闭、扫描可取消
 
 ---
 
@@ -237,8 +237,8 @@
 
 ## 13. 里程碑路线图状态
 
-- M0 骨架 ✓（2026-10-10）/ M1 主进程地基 ✓（2026-10-10）/ M2 扫描引擎 ✓（2026-10-10）
-- 下一个：**M3 磁盘页**（结果表 + 多选 + 预览 + 清理闭环）。开工前准备：第一批 shadcn 组件（`button` `alert-dialog` `table` `tabs` `checkbox` `progress` `sonner`）+ 回收站删除方案落地（`trash` 包或 PowerShell Shell.Application 二选一）
+- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓（均 2026-10-10）
+- 下一个：**M4 端口采集引擎**（netstat 解析 + 进程信息合并 + 关注清单与变化检测）
 
 ---
 
@@ -271,5 +271,11 @@
 夹具大文件精确核对 / 白名单排除 / 3 万文件级取消（166ms）/ 接管语义 / 进度推送 /
 扫描期间渲染进程响应 3ms。性能基线：本机 %TEMP% 全量扫描 8.9s（优化前 21.6s）。
 
-**git**：基线提交 `a50873e`（M0+M1）；M2 改动待提交。
+**M3 验证结果（e2e 全绿，34 项）**：`node scripts/e2e-disk.mjs` 覆盖 ——
+伪造路径防护 / 白名单防护 / 回收站删除（枚举回收站确认可还原）/ 永久删除 /
+重复清理语义 / UI 全流程（渲染、tab 切换、真实鼠标点击、确认对话框、取消扫描）。
+注：UI 自动化里 radix 的 Tabs / 对话框需用 CDP 真实鼠标事件（mousedown），
+程序化 `.click()` 不触发；Cancel 按钮按 `data-slot="alert-dialog-cancel"` 精确命中。
+
+**git**：基线提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）；M3 改动待提交。
 

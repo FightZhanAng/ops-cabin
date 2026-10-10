@@ -1,5 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ScanOptions, ScanOutcome, ScanProgress } from '../shared/disk'
+import type {
+  CleanMode,
+  CleanOutcome,
+  CleanRequestItem,
+  ScanOptions,
+  ScanOutcome,
+  ScanProgress,
+  VolumeInfo
+} from '../shared/disk'
 import type { AppInfo, Settings } from '../shared/types'
 
 /*
@@ -13,6 +21,12 @@ const api = {
   /** 在系统浏览器里打开链接。主进程只放行 http/https */
   openExternal: (url: string): Promise<void> =>
     ipcRenderer.invoke('app:open-external', url) as Promise<void>,
+  /** 在资源管理器里定位到该路径 */
+  showInFolder: (path: string): Promise<void> =>
+    ipcRenderer.invoke('app:show-in-folder', path) as Promise<void>,
+  /** 弹系统目录选择器，取消返回 null */
+  pickDirectory: (): Promise<string | null> =>
+    ipcRenderer.invoke('app:pick-directory') as Promise<string | null>,
 
   /* 设置 */
   getSettings: (): Promise<Settings | null> =>
@@ -28,7 +42,7 @@ const api = {
     }
   },
 
-  /* 磁盘扫描 */
+  /* 磁盘扫描与清理 */
   /** 启动扫描；已有任务会被「接管」（先取消旧的，再开新的） */
   startScan: (options: ScanOptions): Promise<ScanOutcome> =>
     ipcRenderer.invoke('scan:start', options) as Promise<ScanOutcome>,
@@ -41,6 +55,13 @@ const api = {
       ipcRenderer.off('scan:progress', listener)
     }
   },
+  /** 执行清理。只允许删除最近一次扫描结果里的路径 */
+  runClean: (items: CleanRequestItem[], mode: CleanMode): Promise<CleanOutcome> =>
+    ipcRenderer.invoke('clean:run', items, mode) as Promise<CleanOutcome>,
+
+  /* 分区 */
+  listVolumes: (): Promise<VolumeInfo[]> =>
+    ipcRenderer.invoke('volumes:list') as Promise<VolumeInfo[]>,
 
   /** 退出应用 —— 托盘常驻模式下这是正常的退出出口（关窗只是隐藏） */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>
