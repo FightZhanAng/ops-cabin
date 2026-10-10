@@ -440,4 +440,11 @@ lucide 为 ISC、class-variance-authority 与 TypeScript 为 Apache-2.0（构建
 （多了许可文件与说明文档），以补丁版经 CI 重出安装包与 Release。
 
 **验证**：`pnpm dist` 后核对 `release/win-unpacked/resources/{LICENSE,THIRD-PARTY-NOTICES.md}` 存在；
-`e2e-portable` 全绿；README 截图取自 0.2.1 冒烟（浅色总览、浅色端口、深色端口）。
+`e2e-portable` 全绿；README 截图取自 0.2.1 冒烟（浅色总览、浅色端口、深色总览）。
+
+**附带的测试基建修复**：冒烟驱动 `capturePage()` 偶发拿到「导航前的陈旧帧」（深色轮把端口页截成了磁盘页
+——被遮挡的窗口可能停更合成帧）→ `src/main/smoke.ts` 的 capture 改为「窗口移到最前 + 等一帧 + 取两次」；
+重跑冒烟，深浅两轮八张截图全部正确（该函数只在 `OPS_CABIN_SMOKE_DRIVE=1` 时执行，普通 e2e 不受影响）。
+
+**发布**：`v0.2.1`（run 38044051256，2m0s 全绿）→ Release 四类资产齐备；仓库设 7 个 topics
+（windows / electron / react / desktop-app / disk-cleaner / port-monitor / developer-tools）。

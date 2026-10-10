@@ -43,6 +43,11 @@ export async function runSmoke(win: BrowserWindow): Promise<void> {
   const run = (script: string): Promise<unknown> => win.webContents.executeJavaScript(script, true)
   const capture = async (name: string): Promise<void> => {
     try {
+      // 被遮挡的窗口可能停更合成帧，capturePage 会拿到上一页的陈旧画面
+      //（曾把端口页截成磁盘页）：先把窗口提到最前，等一帧，取两次以当帧为准。
+      win.moveTop()
+      await wait(120)
+      await win.webContents.capturePage()
       const image = await win.webContents.capturePage()
       writeFileSync(join(smokeDir(), `${name}.png`), image.toPNG())
     } catch {
