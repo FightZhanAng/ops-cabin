@@ -10,6 +10,11 @@ files:
 extraResources:
   - from: resources
     to: resources
+  # 许可与第三方声明随分发：内嵌的 B612 Mono 为 OFL-1.1，要求随附许可文本
+  - from: LICENSE
+    to: LICENSE
+  - from: THIRD-PARTY-NOTICES.md
+    to: THIRD-PARTY-NOTICES.md
 win:
   icon: build/icon.ico
   target:

@@ -421,3 +421,23 @@ CI 文件已就绪但未实跑）。
 Release [v0.2.0](https://github.com/FightZhanAng/ops-cabin/releases/tag/v0.2.0) 四类资产齐备
 （setup 96.1MB / portable 95.9MB / `latest.yml` / `.blockmap`）。CI 唯一提示是
 `actions/*` 的 Node 20 运行时弃用警告（不影响）。本地十套 e2e 在 0.2.0 上全绿。
+
+---
+
+## 18. 开源化：README / LICENSE / 第三方声明（2026-10-10）
+
+**补的是什么**：`README.md`（功能 / 下载安装 / 磁盘清理的三道安全防线 / 端口雷达用法 / 开发与十套 e2e /
+设计说明 / 隐私）、`LICENSE`（**MIT**，版权人 FightZhanAng —— 参考项目 aihot-desk 未带许可，此为项目自定）、
+`THIRD-PARTY-NOTICES.md`（运行期内嵌组件表 + **B612 Mono 的 SIL OFL 1.1 全文**，逐字取自
+`@fontsource/b612-mono/LICENSE`）。
+
+**合规要点**：内嵌字体 OFL-1.1 要求分发时**随附许可文本** —— 因此 `electron-builder.yml` 的
+`extraResources` 增加 `LICENSE` 与 `THIRD-PARTY-NOTICES.md`，二者随安装包落到应用 `resources/` 目录；
+Chromium / Electron 的许可由 Electron 自身随包提供（`LICENSE.electron.txt`、`LICENSES.chromium.html`）。
+lucide 为 ISC、class-variance-authority 与 TypeScript 为 Apache-2.0（构建期，不随包），其余运行期组件为 MIT。
+
+**package.json**：补 `license`、`repository` 字段；版本 `0.2.0 → 0.2.1` —— 发布物内容发生变化
+（多了许可文件与说明文档），以补丁版经 CI 重出安装包与 Release。
+
+**验证**：`pnpm dist` 后核对 `release/win-unpacked/resources/{LICENSE,THIRD-PARTY-NOTICES.md}` 存在；
+`e2e-portable` 全绿；README 截图取自 0.2.1 冒烟（浅色总览、浅色端口、深色端口）。

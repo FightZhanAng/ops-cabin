@@ -1,9 +1,14 @@
 {
   "name": "ops-cabin",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "运维舱 —— Windows 本机运维台：系统资源总览、磁盘扫描清理与端口雷达",
   "author": "tomcato",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/FightZhanAng/ops-cabin.git"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "node node_modules/electron/install.js",
