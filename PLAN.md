@@ -136,20 +136,19 @@
 
 ---
 
-## 7. M6 总览页（首页）
+## 7. M6 总览页（首页）—— 已完成（2026-10-10）
 
-**目标**：一屏回答"现在什么状况"。
-**设计依据**：`design-system/opscabin/pages/overview.md`。
+**产出**：
+- `src/main/metrics.ts`：`MetricsMonitor` —— CPU（`os.cpus()` 计数差分，带 2s 空闲心跳让差分窗口始终新鲜）、内存（`os.totalmem/freemem`）；有订阅时 1s 推送、无订阅即停
+- `src/renderer/views/OverviewView.tsx` + `components/overview/`：`PartitionBars`（分区占用条）、`MetricsPanel`（CPU/内存 KPI 大字 + `Sparkline` ≤60 点）、`AlertFeed`（磁盘将满 + 端口变化，点条目跳页）；关注端口区复用 M5 的 `WatchGrid`
+- 面板即入口：分区条 → 磁盘页、端口卡片区 → 端口页；IPC `metrics:sample/subscribe/unsubscribe` + 推送
 
-**文件**：
-- 新建 `src/main/metrics.ts`：CPU（`os.cpus()` 差值采样）、内存（`os.totalmem/freemem`）、磁盘 IO 与网络（`systeminformation` 包；引入前确认打包无原生依赖问题）、分区信息（PowerShell `Get-Volume` 或 `systeminformation`）
-- 新建 `src/renderer/views/OverviewView.tsx` + `components/overview/`：`PartitionBars`、`WatchCards`（复用 M5 卡片）、`MetricCard`（KPI 大字 + sparkline ≤60 点）、`AlertFeed`（提醒流：磁盘将满 / 端口变化 / 上次扫描）
-- IPC：`metrics:subscribe`（1s 推送一次采样）
+**与计划的差异**：磁盘 IO / 网络速率不做（`systeminformation` 引入与采样成本评估后延后，见 §12）；提醒流不做「上次扫描」项（扫描状态未持久化，等设置页的调度落地后补）。
 
-**验收**：
-- 总览 2s 内出数据；读数与任务管理器同量级（允许采样误差）
-- 每块面板点击可跳转对应页
-- 断网环境下不报错（网络读数降级显示）
+**验收（e2e 22 项全绿，`scripts/e2e-overview.mjs`）**：
+- 一屏渲染（分区剩余 / 关注端口卡片占用中 / 指标 / 提醒流）
+- CPU 与内存读数与任务管理器同量级；走势线持续积累数据点
+- 面板导航（分区条 → 磁盘页、端口区 → 端口页）与返回后重订阅
 
 ---
 
@@ -232,8 +231,8 @@
 
 ## 13. 里程碑路线图状态
 
-- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓ / M4 端口引擎 ✓ / M5 端口页 ✓（均 2026-10-10）
-- 下一个：**M6 总览页**（磁盘分区条 + 关注端口卡片 + 资源读数 + 提醒流）
+- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓ / M4 端口引擎 ✓ / M5 端口页 ✓ / M6 总览页 ✓（均 2026-10-10）
+- 下一个：**M7 设置页**（白名单 / 通知 / 清理计划 / 更新 / 关于）
 
 ---
 
@@ -286,5 +285,11 @@ kill 安全边界 / 添加与移除关注 / 页面切换重订阅 / 时间线记
 **产品级修复**：`PortsMonitor.setWatchlist` 用最近快照立即建立新关注基线（防「关注后
 快速变化被基线吞掉」），由镜像场景诊断（关注后立刻杀 / 关注后 1 秒内启动）双向验证。
 
-**git**：已提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）、`be1f35e`（M3）、`a1f83a5`（M4）；M5 改动待提交。
+**M6 验证结果（e2e 全绿，22 项）**：`node scripts/e2e-overview.mjs` 覆盖 ——
+一屏渲染 / 指标推送与走势线 / 关注端口卡片 / 提醒流 / 面板导航 / 重进重订阅。
+**回归适配（M6 上线后发现的既有测试脆弱点）**：总览成为默认页并常驻订阅端口推送，
+M4 的 e2e 需要适配 —— 开头先离开总览页（订阅计数才干净）、服务端口改为轮询等待
+（容忍 node 冷启动与端口竞争）、退订断言窗口放宽（等在途采样完成）。
+
+**git**：已提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）、`be1f35e`（M3）、`a1f83a5`（M4）、`7f8081d`（M5）；M6 改动待提交。
 

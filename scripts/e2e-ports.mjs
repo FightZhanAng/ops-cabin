@@ -227,6 +227,12 @@ if (!page) {
 
   /* ---------- A. 基础采集与外部 netstat 对比 ---------- */
   console.log('== A. 基础采集与 netstat 对比 ==')
+  // 先离开总览页：总览（M6 起）会常驻订阅端口推送，测试的订阅计数需要干净环境
+  await evaluate(
+    cdp,
+    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '磁盘')?.click(); 'ok'`
+  )
+  await wait(800)
   const ext1 = collectNetstat()
   const snapshot = JSON.parse(
     await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')
@@ -259,13 +265,23 @@ if (!page) {
   /* ---------- B. 真实服务端口（PID 精确匹配） ---------- */
   console.log('== B. 真实服务端口 ==')
   serverA = startServer(PORT_A, '127.0.0.1')
-  await wait(1500)
-  check('服务 A 启动存活', serverA.exitCode === null, `exit=${serverA.exitCode}`)
-  const snapB = JSON.parse(
-    await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')
-  )
-  const entryA = snapB.entries.find((e) => e.port === PORT_A && e.protocol === 'tcp')
-  check('新服务端口 2s 内出现', Boolean(entryA), `port=${PORT_A}`)
+  // 轮询等待端口真正出现（容忍 node 冷启动的慢速与端口竞争）
+  let entryA = null
+  const bDeadline = Date.now() + 10000
+  while (Date.now() < bDeadline) {
+    await wait(500)
+    const snap = JSON.parse(
+      await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')
+    )
+    const found = snap.entries.find((e) => e.port === PORT_A && e.protocol === 'tcp')
+    if (found) {
+      entryA = found
+      if (found.pid === serverA.pid) break
+    }
+    if (serverA.exitCode !== null) break // 服务自己退出了（bind 失败）
+  }
+  check('服务 A 存活', serverA.exitCode === null, `exit=${serverA.exitCode}`)
+  check('新服务端口出现', Boolean(entryA), `port=${PORT_A}`)
   check('PID 精确匹配', entryA?.pid === serverA.pid, `entry=${entryA?.pid} vs spawn=${serverA.pid}`)
   check('识别出进程名（node）', /node/i.test(entryA?.processName ?? ''), entryA?.processName ?? 'null')
   check(
@@ -277,11 +293,16 @@ if (!page) {
   /* ---------- C. 多地址合并 ---------- */
   console.log('== C. 多地址合并（双栈） ==')
   serverB = startServer(PORT_B)
-  await wait(1500)
-  const snapC = JSON.parse(
-    await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')
-  )
-  const entriesB = snapC.entries.filter((e) => e.port === PORT_B && e.protocol === 'tcp')
+  let entriesB = []
+  const cDeadline = Date.now() + 8000
+  while (Date.now() < cDeadline) {
+    await wait(500)
+    const snap = JSON.parse(
+      await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')
+    )
+    entriesB = snap.entries.filter((e) => e.port === PORT_B && e.protocol === 'tcp')
+    if (entriesB.length > 0) break
+  }
   check('同端口只保留一条（地址已合并）', entriesB.length === 1, `count=${entriesB.length}`)
   check(
     '地址列表登记完整',
@@ -373,9 +394,9 @@ if (!page) {
   /* ---------- F. 退订停止推送 ---------- */
   console.log('== F. 退订 ==')
   await invoke('window.opsCabin.unsubscribePorts().then(() => "ok")')
-  await wait(2500)
+  await wait(4000) // 等在途采样完成（含最长的一次进程表刷新）
   const countBefore = await evaluate(cdp, 'window.__snapshots.length')
-  await wait(4500)
+  await wait(6000) // 两个采样周期内不应再有新推送
   const countAfter = await evaluate(cdp, 'window.__snapshots.length')
   check('退订后停止推送', countAfter === countBefore, `${countBefore} → ${countAfter}`)
 

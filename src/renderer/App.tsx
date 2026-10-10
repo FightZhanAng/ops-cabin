@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { Toaster } from 'sonner'
 import type { AppInfo } from '@shared/types'
 import { DiskView } from './views/DiskView'
+import { OverviewView } from './views/OverviewView'
 import { PortsView } from './views/PortsView'
 
 const NAV = [
@@ -15,7 +16,7 @@ const NAV = [
 type NavKey = (typeof NAV)[number]['key']
 
 const PLACEHOLDER: Record<NavKey, string> = {
-  overview: '系统资源总览：磁盘分区、关注端口状态灯、CPU / 内存 / 磁盘 IO / 网络。',
+  overview: '',
   disk: '',
   ports: '',
   settings: '设置：白名单、清理计划、通知开关、更新。'
@@ -47,6 +48,7 @@ export function App(): JSX.Element {
               <button
                 key={item.key}
                 type="button"
+                data-testid={`nav-${item.key}`}
                 onClick={() => setView(item.key)}
                 className={
                   'cursor-pointer rounded-md px-3 py-1.5 text-left text-[13px] transition-colors duration-150 ' +
@@ -76,7 +78,9 @@ export function App(): JSX.Element {
           </h1>
         </header>
         <section className="min-h-0 flex-1">
-          {view === 'disk' ? (
+          {view === 'overview' ? (
+            <OverviewView onNavigate={(target) => setView(target)} />
+          ) : view === 'disk' ? (
             <DiskView />
           ) : view === 'ports' ? (
             <PortsView />

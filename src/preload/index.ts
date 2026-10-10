@@ -8,6 +8,7 @@ import type {
   ScanProgress,
   VolumeInfo
 } from '../shared/disk'
+import type { MetricsSample } from '../shared/metrics'
 import type {
   KillResult,
   PortChange,
@@ -70,11 +71,28 @@ const api = {
   listVolumes: (): Promise<VolumeInfo[]> =>
     ipcRenderer.invoke('volumes:list') as Promise<VolumeInfo[]>,
 
+  /* 资源指标 */
+  /** 立即采样一次（未就绪返回 null） */
+  sampleMetrics: (): Promise<MetricsSample | null> =>
+    ipcRenderer.invoke('metrics:sample') as Promise<MetricsSample | null>,
+  /** 订阅 1s 采样推送（打开总览时调用，离开时 unsubscribeMetrics） */
+  subscribeMetrics: (): Promise<void> =>
+    ipcRenderer.invoke('metrics:subscribe') as Promise<void>,
+  unsubscribeMetrics: (): Promise<void> =>
+    ipcRenderer.invoke('metrics:unsubscribe') as Promise<void>,
+  onMetricsSample: (handler: (sample: MetricsSample) => void): (() => void) => {
+    const listener = (_event: unknown, sample: MetricsSample): void => handler(sample)
+    ipcRenderer.on('metrics:update', listener)
+    return () => {
+      ipcRenderer.off('metrics:update', listener)
+    }
+  },
+
   /* 端口雷达 */
   /** 立即采集一次端口快照（失败返回 null） */
   listPorts: (): Promise<PortsSnapshot | null> =>
     ipcRenderer.invoke('ports:list') as Promise<PortsSnapshot | null>,
-  /** 订阅实时推送（进入端口页时调用，离开时 unsubscribePorts） */
+  /** 订阅实时推送（进入端口相关页面时调用，离开时 unsubscribePorts） */
   subscribePorts: (): Promise<void> => ipcRenderer.invoke('ports:subscribe') as Promise<void>,
   unsubscribePorts: (): Promise<void> => ipcRenderer.invoke('ports:unsubscribe') as Promise<void>,
   /** 每次采样推送（约 2 秒一条） */

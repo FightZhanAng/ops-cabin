@@ -13,9 +13,11 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CleanMode, CleanOutcome, CleanRequestItem, ScanOutcome } from '../shared/disk'
+import type { MetricsSample } from '../shared/metrics'
 import type { KillResult, PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
 import { Cleaner } from './cleaner'
+import { MetricsMonitor } from './metrics'
 import { appIconPath, preloadPath } from './paths'
 import { PortEventsStore } from './ports/events'
 import { killProcess } from './ports/kill'
@@ -41,6 +43,7 @@ let tray: TrayController | null = null
 let settingsStore: SettingsStore | null = null
 let scanner: Scanner | null = null
 let cleaner: Cleaner | null = null
+let metricsMonitor: MetricsMonitor | null = null
 let portsMonitor: PortsMonitor | null = null
 let watchlistStore: WatchlistStore | null = null
 let portEvents: PortEventsStore | null = null
@@ -425,6 +428,15 @@ function registerIpc(): void {
     if (monitor) void monitor.sampleNow().catch(() => {})
     return result
   })
+
+  /* 资源指标 */
+  ipcMain.handle('metrics:sample', (): MetricsSample | null => metricsMonitor?.sampleNow() ?? null)
+  ipcMain.handle('metrics:subscribe', () => {
+    metricsMonitor?.addSubscriber()
+  })
+  ipcMain.handle('metrics:unsubscribe', () => {
+    metricsMonitor?.removeSubscriber()
+  })
 }
 
 /* ------------------------------------------------------------ 启动 */
@@ -458,6 +470,14 @@ if (!gotLock) {
       }
     })
     cleaner = new Cleaner()
+
+    metricsMonitor = new MetricsMonitor({
+      onSample: (sample) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('metrics:update', sample)
+        }
+      }
+    })
 
     watchlistStore = new WatchlistStore()
     portEvents = new PortEventsStore()
@@ -510,6 +530,7 @@ if (!gotLock) {
   })
 
   app.on('will-quit', () => {
+    metricsMonitor?.dispose()
     portsMonitor?.dispose()
     scanner?.cancel()
     tray?.destroy()
