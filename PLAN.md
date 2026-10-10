@@ -414,3 +414,10 @@ CI 文件已就绪但未实跑）。
 
 **首次实跑 CI 的注意点**：Release 资产缺 `latest.yml` / `*.blockmap` 会让应用内检查更新持续报错；
 若 runner 上 electron 二进制下载缓慢，可在工作流里改 `ELECTRON_MIRROR` 镜像地址。
+
+**首跑结果（2026-10-10）**：tag `v0.2.0` → run
+[38043172973](https://github.com/FightZhanAng/ops-cabin/actions/runs/38043172973) 全程 **2 分 0 秒
+全绿**（Checkout → pnpm/Node → install → typecheck → dist → 上传资产）；
+Release [v0.2.0](https://github.com/FightZhanAng/ops-cabin/releases/tag/v0.2.0) 四类资产齐备
+（setup 96.1MB / portable 95.9MB / `latest.yml` / `.blockmap`）。CI 唯一提示是
+`actions/*` 的 Node 20 运行时弃用警告（不影响）。本地十套 e2e 在 0.2.0 上全绿。
