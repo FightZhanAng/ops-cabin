@@ -14,6 +14,8 @@ import { setTimeout as wait } from 'node:timers/promises'
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const PORT = 19235
 const FAKE_VERSION = '9.9.9'
+/** 当前版本号跟着 package.json 走：以后升版本不需要改这个脚本 */
+const appVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 const userDataDir = join(tmpdir(), 'ops-cabin-update-e2e-userdata')
 const smokeDir = join(tmpdir(), 'ops-cabin-smoke')
 const settingsFile = join(userDataDir, 'settings.json')
@@ -236,7 +238,11 @@ if (!page) {
     cdp,
     `document.querySelector('[data-testid="update-section"]')?.textContent ?? ''`
   )
-  check('显示当前版本', /0\.1\.0/.test(versionText), versionText.replace(/\s+/g, ' ').slice(0, 60))
+  check(
+    '显示当前版本',
+    versionText.includes(appVersion),
+    versionText.replace(/\s+/g, ' ').slice(0, 60)
+  )
   check(
     '模拟模式说明',
     versionText.includes('模拟更新模式'),

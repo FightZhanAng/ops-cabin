@@ -392,3 +392,25 @@ CI 文件已就绪但未实跑）。
   `ports:list` 的「现采」语义不变），或并行化 `collectPorts`；
 - `e2e-ports` 的「变化检测」段在系统负载下偶发红（M4/M6 已知敏感性，与本次改版无关）；
 - 上一节 §15 的人工待办（安装包双击实测、真实 GitHub 发版）仍然有效。
+
+---
+
+## 17. 首次发版（2026-10-10）
+
+**仓库**：`github.com/FightZhanAng/ops-cabin`（新建，与 electron-builder 的 `publish.owner/repo` 对齐）。
+**版本**：`0.2.0`（M9 界面重设计随版发布）；tag `v0.2.0`。
+
+**发版链路**：tag `v*` → GitHub Actions（`.github/workflows/release.yml`）→ windows-latest 上
+`pnpm typecheck` → `pnpm dist` → `softprops/action-gh-release` 上传四类资产：
+`*-setup.exe` / `*-portable.exe` / `latest.yml` / `*.blockmap`。
+
+**版本纪律（本次落地）**：测试脚本里的版本断言全部改为读 `package.json`
+（`e2e-update`、`e2e-portable`）—— 以后升版本只改 `package.json` 一处。
+
+**本地预验**：`pnpm dist`（0.2.0 产物）+ `e2e-portable` + `e2e-update` + `e2e-check` + `e2e-smoke` 全绿。
+
+**本机推送通道（备忘）**：22 端口被拒，`~/.ssh/config` 把 `github.com` 的 SSH 改走
+`ssh.github.com:443`；`gh` CLI 已登录 `FightZhanAng`（`gh api` 可用，`api.github.com` 虽在 hosts 里）。
+
+**首次实跑 CI 的注意点**：Release 资产缺 `latest.yml` / `*.blockmap` 会让应用内检查更新持续报错；
+若 runner 上 electron 二进制下载缓慢，可在工作流里改 `ELECTRON_MIRROR` 镜像地址。

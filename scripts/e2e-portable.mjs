@@ -5,7 +5,7 @@
 //
 // 用法：先 `pnpm dist`，再 node scripts/e2e-portable.mjs
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -13,6 +13,8 @@ import { setTimeout as wait } from 'node:timers/promises'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
 const PORT = 19237
+/** 版本号跟着 package.json 走：以后升版本不需要改这个脚本 */
+const appVersion = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).version
 const releaseDir = join(root, 'release')
 const exe = join(releaseDir, 'win-unpacked', '运维舱.exe')
 const userDataDir = join(tmpdir(), 'ops-cabin-portable-e2e-userdata')
@@ -142,8 +144,8 @@ function clickExpr(selector) {
 /* ---------------- 主流程 ---------------- */
 
 console.log('== 检查 Release 要件 ==')
-const setup = join(releaseDir, 'ops-cabin-0.1.0-setup.exe')
-const portable = join(releaseDir, 'ops-cabin-0.1.0-portable.exe')
+const setup = join(releaseDir, `ops-cabin-${appVersion}-setup.exe`)
+const portable = join(releaseDir, `ops-cabin-${appVersion}-portable.exe`)
 const latestYml = join(releaseDir, 'latest.yml')
 check('setup.exe 存在且体积合理', existsSync(setup) && statSync(setup).size > 50 * 1024 * 1024, `${Math.round(statSync(setup).size / 1024 / 1024)}MB`)
 check('portable.exe 存在且体积合理', existsSync(portable) && statSync(portable).size > 50 * 1024 * 1024, `${Math.round(statSync(portable).size / 1024 / 1024)}MB`)
@@ -174,7 +176,7 @@ if (!page) {
   const info = JSON.parse(
     await evaluate(cdp, `window.opsCabin.getAppInfo().then((i) => JSON.stringify(i))`, true)
   )
-  check('版本信息正确', info.version === '0.1.0', `v${info.version} · Electron ${info.electron}`)
+  check('版本信息正确', info.version === appVersion, `v${info.version} · Electron ${info.electron}`)
 
   await evaluate(cdp, clickExpr('[data-testid="nav-settings"]'))
   check(
