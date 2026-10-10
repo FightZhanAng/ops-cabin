@@ -8,7 +8,13 @@ import type {
   ScanProgress,
   VolumeInfo
 } from '../shared/disk'
-import type { PortChange, PortsSnapshot, WatchInput, WatchItem } from '../shared/ports'
+import type {
+  KillResult,
+  PortChange,
+  PortsSnapshot,
+  WatchInput,
+  WatchItem
+} from '../shared/ports'
 import type { AppInfo, Settings } from '../shared/types'
 
 /*
@@ -101,6 +107,10 @@ const api = {
   /** 关注端口的变化历史（新的在前） */
   listPortEvents: (): Promise<PortChange[]> =>
     ipcRenderer.invoke('ports:events') as Promise<PortChange[]>,
+
+  /** 结束进程（只允许结束最近快照里正在监听端口的进程） */
+  runKill: (pid: number): Promise<KillResult> =>
+    ipcRenderer.invoke('ports:kill', pid) as Promise<KillResult>,
 
   /** 退出应用 —— 托盘常驻模式下这是正常的退出出口（关窗只是隐藏） */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>

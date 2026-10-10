@@ -60,3 +60,11 @@ export interface WatchInput {
   label: string
   note?: string
 }
+
+/** 结束进程的执行结果 */
+export interface KillResult {
+  ok: boolean
+  /** 是否走到了强制终止（/F） */
+  forced: boolean
+  error?: string
+}

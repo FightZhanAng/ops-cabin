@@ -3,6 +3,7 @@ import type { JSX } from 'react'
 import { Toaster } from 'sonner'
 import type { AppInfo } from '@shared/types'
 import { DiskView } from './views/DiskView'
+import { PortsView } from './views/PortsView'
 
 const NAV = [
   { key: 'overview', label: '总览' },
@@ -16,7 +17,7 @@ type NavKey = (typeof NAV)[number]['key']
 const PLACEHOLDER: Record<NavKey, string> = {
   overview: '系统资源总览：磁盘分区、关注端口状态灯、CPU / 内存 / 磁盘 IO / 网络。',
   disk: '',
-  ports: '端口雷达：关注端口卡片阵、全部监听端口表、进程处置与变化通知。',
+  ports: '',
   settings: '设置：白名单、清理计划、通知开关、更新。'
 }
 
@@ -77,6 +78,8 @@ export function App(): JSX.Element {
         <section className="min-h-0 flex-1">
           {view === 'disk' ? (
             <DiskView />
+          ) : view === 'ports' ? (
+            <PortsView />
           ) : (
             <div className="p-6">
               <div className="max-w-2xl rounded-[10px] border border-line bg-panel p-4 text-[13px] leading-relaxed text-dim">

@@ -47,6 +47,17 @@ export class PortsMonitor {
     for (const port of [...this.#lastSeen.keys()]) {
       if (!ports.has(port)) this.#lastSeen.delete(port)
     }
+    // 新关注项用「最近一次快照」立即建立基线 —— 不能等下一个采样：
+    // 否则「关注后几秒内发生的状态变化」会被基线建立吞掉，而采样周期里
+    // 的忙合流还会把基线窗口推得不可预测。
+    if (this.#latest) {
+      for (const item of items) {
+        if (!this.#lastSeen.has(item.port)) {
+          const entry = this.#latest.entries.find((e) => e.port === item.port)
+          this.#lastSeen.set(item.port, entry ? describeOccupant(entry) : null)
+        }
+      }
+    }
     this.#schedule()
   }
 

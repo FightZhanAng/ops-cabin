@@ -13,11 +13,12 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CleanMode, CleanOutcome, CleanRequestItem, ScanOutcome } from '../shared/disk'
-import type { PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
+import type { KillResult, PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
 import { Cleaner } from './cleaner'
 import { appIconPath, preloadPath } from './paths'
 import { PortEventsStore } from './ports/events'
+import { killProcess } from './ports/kill'
 import { WatchlistStore } from './ports/store'
 import { PortsMonitor } from './ports/watch'
 import { Scanner, parseScanOptions } from './scanner'
@@ -407,6 +408,23 @@ function registerIpc(): void {
   })
 
   ipcMain.handle('ports:events', () => portEvents?.recent(200) ?? [])
+
+  /* 结束进程：安全边界 —— 只允许结束「最近一次端口快照里正在监听」的进程 */
+  ipcMain.handle('ports:kill', async (_event, rawPid: unknown): Promise<KillResult> => {
+    const pid = Number(rawPid)
+    if (!Number.isInteger(pid) || pid <= 4) {
+      return { ok: false, forced: false, error: '无效的进程号' }
+    }
+    const allowed = portsMonitor?.latest?.entries.some((entry) => entry.pid === pid) ?? false
+    if (!allowed) {
+      return { ok: false, forced: false, error: '该进程不在最近一次端口快照中，已拒绝' }
+    }
+    const result = await killProcess(pid)
+    // 立即重采一次，让界面尽快反映变化
+    const monitor = portsMonitor
+    if (monitor) void monitor.sampleNow().catch(() => {})
+    return result
+  })
 }
 
 /* ------------------------------------------------------------ 启动 */
