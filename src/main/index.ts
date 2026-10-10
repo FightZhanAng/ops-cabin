@@ -1,11 +1,25 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeTheme, screen, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  Notification,
+  screen,
+  shell
+} from 'electron'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { CleanMode, CleanOutcome, CleanRequestItem, ScanOutcome } from '../shared/disk'
+import type { PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
 import { Cleaner } from './cleaner'
 import { appIconPath, preloadPath } from './paths'
+import { PortEventsStore } from './ports/events'
+import { WatchlistStore } from './ports/store'
+import { PortsMonitor } from './ports/watch'
 import { Scanner, parseScanOptions } from './scanner'
 import { SettingsStore } from './settings'
 import { TrayController } from './tray'
@@ -26,6 +40,11 @@ let tray: TrayController | null = null
 let settingsStore: SettingsStore | null = null
 let scanner: Scanner | null = null
 let cleaner: Cleaner | null = null
+let portsMonitor: PortsMonitor | null = null
+let watchlistStore: WatchlistStore | null = null
+let portEvents: PortEventsStore | null = null
+/** 通知对象要留引用，被 GC 掉后点击回调不再触发 */
+let activeNotification: Notification | null = null
 let isQuitting = false
 
 /* ------------------------------------------------------------ 冒烟自检 */
@@ -201,7 +220,38 @@ function togglePanel(): void {
   showPanel()
 }
 
-/* ------------------------------------------------------------ IPC */
+/* ------------------------------------------------------------ 端口通知 */
+
+const CHANGE_LABEL: Record<PortChange['type'], string> = {
+  occupy: '被占用',
+  release: '已释放',
+  change: '换了占用者'
+}
+
+/** 关注端口变化的系统通知（多条聚合成一条，避免通知轰炸） */
+function notifyPortChanges(changes: PortChange[]): void {
+  const first = changes[0]
+  const body =
+    changes.length === 1
+      ? `端口 ${first.port} ${CHANGE_LABEL[first.type]}${first.process ? `：${first.process}` : ''}`
+      : `${changes
+          .slice(0, 5)
+          .map((c) => `${c.port} ${CHANGE_LABEL[c.type]}`)
+          .join('；')}${changes.length > 5 ? ` 等 ${changes.length} 项` : ''}`
+  try {
+    const notification = new Notification({ title: '关注端口有变化', body, icon: appIconPath() })
+    notification.on('click', () => showPanel())
+    notification.on('close', () => {
+      if (activeNotification === notification) activeNotification = null
+    })
+    activeNotification = notification
+    notification.show()
+  } catch {
+    /* 通知失败不阻塞 */
+  }
+}
+
+/* ------------------------------------------------------------ IPC 入参 */
 
 /** 校验渲染层传来的清理项（路径与字节数都要合理） */
 function parseCleanItems(raw: unknown): CleanRequestItem[] {
@@ -217,6 +267,33 @@ function parseCleanItems(raw: unknown): CleanRequestItem[] {
   }
   return out
 }
+
+function parsePort(raw: unknown): number | null {
+  const value = Number(raw)
+  return Number.isInteger(value) && value > 0 && value <= 65535 ? value : null
+}
+
+function parseWatchInput(raw: unknown): WatchInput | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const rec = raw as Record<string, unknown>
+  const port = parsePort(rec.port)
+  if (port === null) return null
+  const label =
+    typeof rec.label === 'string' && rec.label.trim().length > 0 ? rec.label.trim() : `端口 ${port}`
+  const note = typeof rec.note === 'string' && rec.note.length > 0 ? rec.note : undefined
+  return { port, label, note }
+}
+
+function parseWatchPatch(raw: unknown): { label?: string; note?: string } {
+  if (raw === null || typeof raw !== 'object') return {}
+  const rec = raw as Record<string, unknown>
+  const patch: { label?: string; note?: string } = {}
+  if (typeof rec.label === 'string' && rec.label.length > 0) patch.label = rec.label
+  if (typeof rec.note === 'string') patch.note = rec.note
+  return patch
+}
+
+/* ------------------------------------------------------------ IPC */
 
 function registerIpc(): void {
   ipcMain.handle(
@@ -289,6 +366,47 @@ function registerIpc(): void {
 
   /* 分区 */
   ipcMain.handle('volumes:list', () => listVolumes())
+
+  /* 端口雷达 */
+  ipcMain.handle('ports:list', async (): Promise<PortsSnapshot | null> => {
+    if (!portsMonitor) return null
+    try {
+      return await portsMonitor.sampleNow()
+    } catch {
+      return null
+    }
+  })
+  ipcMain.handle('ports:subscribe', () => {
+    portsMonitor?.addSubscriber()
+  })
+  ipcMain.handle('ports:unsubscribe', () => {
+    portsMonitor?.removeSubscriber()
+  })
+
+  ipcMain.handle('ports:watch:list', () => watchlistStore?.all ?? [])
+  ipcMain.handle('ports:watch:add', (_event, raw: unknown) => {
+    const input = parseWatchInput(raw)
+    if (!input || !watchlistStore) return watchlistStore?.all ?? []
+    const items = watchlistStore.add(input.port, input.label, input.note)
+    portsMonitor?.setWatchlist(items)
+    return items
+  })
+  ipcMain.handle('ports:watch:remove', (_event, rawPort: unknown) => {
+    const port = parsePort(rawPort)
+    if (port === null || !watchlistStore) return watchlistStore?.all ?? []
+    const items = watchlistStore.remove(port)
+    portsMonitor?.setWatchlist(items)
+    return items
+  })
+  ipcMain.handle('ports:watch:update', (_event, rawPort: unknown, rawPatch: unknown) => {
+    const port = parsePort(rawPort)
+    if (port === null || !watchlistStore) return watchlistStore?.all ?? []
+    const items = watchlistStore.update(port, parseWatchPatch(rawPatch))
+    portsMonitor?.setWatchlist(items)
+    return items
+  })
+
+  ipcMain.handle('ports:events', () => portEvents?.recent(200) ?? [])
 }
 
 /* ------------------------------------------------------------ 启动 */
@@ -323,6 +441,27 @@ if (!gotLock) {
     })
     cleaner = new Cleaner()
 
+    watchlistStore = new WatchlistStore()
+    portEvents = new PortEventsStore()
+    portsMonitor = new PortsMonitor({
+      onSnapshot: (snapshot) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ports:snapshot', snapshot)
+        }
+      },
+      onChanges: (changes) => {
+        portEvents?.append(changes)
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('ports:changes', changes)
+        }
+        if (settingsStore?.settings.notifyOnPortChange) {
+          notifyPortChanges(changes)
+        }
+      }
+    })
+    // 有关注项时监控自动开始后台盯梢（懒轮询）
+    portsMonitor.setWatchlist(watchlistStore.all)
+
     registerIpc()
     mainWindow = createMainWindow()
     tray = new TrayController({
@@ -353,6 +492,7 @@ if (!gotLock) {
   })
 
   app.on('will-quit', () => {
+    portsMonitor?.dispose()
     scanner?.cancel()
     tray?.destroy()
   })

@@ -96,25 +96,23 @@
 
 ---
 
-## 5. M4 端口采集引擎
+## 5. M4 端口采集引擎 —— 已完成（2026-10-10）
 
-**目标**：1-2 秒轮询出全量监听端口 + 进程详情 + 关注端口变化检测。
+**产出**：
+- `src/shared/ports.ts`：`PortEntry` / `WatchItem` / `PortChange` / `PortsSnapshot` 类型
+- `src/main/ports/collect.ts`：采集引擎 —— netstat -ano（TCP LISTENING + UDP）与进程表（Get-CimInstance Win32_Process）合并；进程表 10s 缓存、遇到未知 PID 立即刷新；同协议同端口多地址合并
+- `src/main/ports/watch.ts`：`PortsMonitor` 懒轮询调度（有订阅 2s / 仅后台关注 5s / 都没有则停）、变化检测（occupy / release / change；首次观察只建基线，不把「刚关注」当变化）
+- `src/main/ports/store.ts`：关注清单持久化（watchlist.json，原子写，损坏留档回退）
+- `src/main/ports/events.ts`：变化历史落盘（port-events.json，限量 1000 条）
+- 主进程接线：IPC（`ports:list/subscribe/unsubscribe/watch:*/events`）+ 变化系统通知（多条聚合、可关）+ preload 桥
 
-**文件**：
-- 新建 `src/main/ports/collect.ts`：数据源 `netstat -ano`（解析 LISTENING + 进程 PID）合并 `Get-CimInstance Win32_Process`（一次拿全部进程名/路径/命令行，缓存 10s）；进程内存/启动时间来自 `Get-Process`
-- 新建 `src/main/ports/watch.ts`：轮询调度（默认 2s，页面不可见时降频到 10s）、与关注清单比对产生变化事件（occupy / release / change）
-- 新建 `src/main/ports/store.ts`：关注清单持久化（`watchlist.json`，复用原子写）
-- 新建 `src/shared/ports.ts`：`PortEntry` / `PortChange` / `WatchItem` 类型
-- IPC：`ports:list`、`ports:subscribe`（推送刷新）、`ports:watch:add/remove/update`
+**与计划的差异**：进程内存 / 启动时间并入 Win32_Process 一次查询（不再单独跑 Get-Process）；「页面不可见降频」改为「无订阅即降频/停止」（可见性交给 M5 的 UI 生命周期管理）。
 
-**实现要点**：
-- PowerShell 调用集中在启动时（拿进程表）+ 30s 刷新；`netstat` 每 2s 跑
-- 关注端口变化 → 主进程记事件 + `Notification`（开关在设置）
-
-**验收**：
-- 端口列表与 `netstat -ano | findstr LISTENING` 条数一致
-- `pnpm dev` 起一个 vite 服务占 5173 → 页面 2s 内出现该端口与 node 进程
-- 关注 5173 → 关掉服务 → 收到"释放"通知（通知开关打开时）
+**验收（e2e 22 项全绿，`scripts/e2e-ports.mjs`）**：
+- 与外部 netstat 两次采样的集合对比：不多报、不遗漏（52 条监听）
+- 真实服务：启动后 2s 内出现、PID 精确匹配、进程名识别为 node.exe、监听地址正确
+- 双栈服务多地址合并为一条；订阅推送 2s 周期、退订即停
+- 关注 51733：启动 → occupy（带进程信息）推送 + 落盘；停止 → release 推送 + 落盘
 
 ---
 
@@ -237,8 +235,8 @@
 
 ## 13. 里程碑路线图状态
 
-- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓（均 2026-10-10）
-- 下一个：**M4 端口采集引擎**（netstat 解析 + 进程信息合并 + 关注清单与变化检测）
+- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓ / M4 端口引擎 ✓（均 2026-10-10）
+- 下一个：**M5 端口页**（关注端口卡片阵 + 全部监听端口表 + 进程处置 + 变化时间线）
 
 ---
 
@@ -277,5 +275,10 @@
 注：UI 自动化里 radix 的 Tabs / 对话框需用 CDP 真实鼠标事件（mousedown），
 程序化 `.click()` 不触发；Cancel 按钮按 `data-slot="alert-dialog-cancel"` 精确命中。
 
-**git**：基线提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）；M3 改动待提交。
+**M4 验证结果（e2e 全绿，22 项）**：`node scripts/e2e-ports.mjs` 覆盖 ——
+外部 netstat 集合对比（不多报 / 不遗漏，52 条监听）/ 真实服务端口与 PID 精确匹配 /
+双栈多地址合并 / 订阅推送与退订停止 / 关注清单 CRUD 与落盘 /
+occupy + release 变化检测与事件落盘。
+
+**git**：已提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）、`be1f35e`（M3）；M4 改动待提交。
 

@@ -8,6 +8,7 @@ import type {
   ScanProgress,
   VolumeInfo
 } from '../shared/disk'
+import type { PortChange, PortsSnapshot, WatchInput, WatchItem } from '../shared/ports'
 import type { AppInfo, Settings } from '../shared/types'
 
 /*
@@ -62,6 +63,44 @@ const api = {
   /* 分区 */
   listVolumes: (): Promise<VolumeInfo[]> =>
     ipcRenderer.invoke('volumes:list') as Promise<VolumeInfo[]>,
+
+  /* 端口雷达 */
+  /** 立即采集一次端口快照（失败返回 null） */
+  listPorts: (): Promise<PortsSnapshot | null> =>
+    ipcRenderer.invoke('ports:list') as Promise<PortsSnapshot | null>,
+  /** 订阅实时推送（进入端口页时调用，离开时 unsubscribePorts） */
+  subscribePorts: (): Promise<void> => ipcRenderer.invoke('ports:subscribe') as Promise<void>,
+  unsubscribePorts: (): Promise<void> => ipcRenderer.invoke('ports:unsubscribe') as Promise<void>,
+  /** 每次采样推送（约 2 秒一条） */
+  onPortsSnapshot: (handler: (snapshot: PortsSnapshot) => void): (() => void) => {
+    const listener = (_event: unknown, snapshot: PortsSnapshot): void => handler(snapshot)
+    ipcRenderer.on('ports:snapshot', listener)
+    return () => {
+      ipcRenderer.off('ports:snapshot', listener)
+    }
+  },
+  /** 关注端口的变化推送（occupy / release / change） */
+  onPortsChanges: (handler: (changes: PortChange[]) => void): (() => void) => {
+    const listener = (_event: unknown, changes: PortChange[]): void => handler(changes)
+    ipcRenderer.on('ports:changes', listener)
+    return () => {
+      ipcRenderer.off('ports:changes', listener)
+    }
+  },
+
+  /* 关注清单 */
+  getWatchlist: (): Promise<WatchItem[]> =>
+    ipcRenderer.invoke('ports:watch:list') as Promise<WatchItem[]>,
+  addWatch: (input: WatchInput): Promise<WatchItem[]> =>
+    ipcRenderer.invoke('ports:watch:add', input) as Promise<WatchItem[]>,
+  removeWatch: (port: number): Promise<WatchItem[]> =>
+    ipcRenderer.invoke('ports:watch:remove', port) as Promise<WatchItem[]>,
+  updateWatch: (port: number, patch: { label?: string; note?: string }): Promise<WatchItem[]> =>
+    ipcRenderer.invoke('ports:watch:update', port, patch) as Promise<WatchItem[]>,
+
+  /** 关注端口的变化历史（新的在前） */
+  listPortEvents: (): Promise<PortChange[]> =>
+    ipcRenderer.invoke('ports:events') as Promise<PortChange[]>,
 
   /** 退出应用 —— 托盘常驻模式下这是正常的退出出口（关窗只是隐藏） */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>
