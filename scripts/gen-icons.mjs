@@ -1,5 +1,10 @@
-// 生成应用图标资源 —— 无外部依赖（手写最小 PNG 编码器）。
+// 生成应用图标资源 —— 无外部依赖（手写最小 PNG / ICO 编码器）。
 // 图标语言：深色圆形徽章 + 信号绿圆环 + 中心点 ——「舱窗里的雷达」。
+//
+// 产物：
+//   resources/icon.png   256×256（窗口图标）
+//   resources/tray.png    32×32 （托盘图标）
+//   build/icon.ico        多尺寸（electron-builder 打包用）
 //
 // 用法：node scripts/gen-icons.mjs
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -58,6 +63,33 @@ function encodePng(size, px) {
   ])
 }
 
+/* ---------- 最小 ICO 编码器（内嵌 PNG 条目） ---------- */
+
+function encodeIco(images) {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0)
+  header.writeUInt16LE(1, 2) // type: icon
+  header.writeUInt16LE(images.length, 4)
+
+  const entries = []
+  let offset = 6 + images.length * 16
+  for (const image of images) {
+    const entry = Buffer.alloc(16)
+    entry[0] = image.size >= 256 ? 0 : image.size // 0 表示 256
+    entry[1] = image.size >= 256 ? 0 : image.size
+    entry[2] = 0
+    entry[3] = 0
+    entry.writeUInt16LE(1, 4) // planes
+    entry.writeUInt16LE(32, 6) // bit count
+    entry.writeUInt32LE(image.png.length, 8)
+    entry.writeUInt32LE(offset, 12)
+    offset += image.png.length
+    entries.push(entry)
+  }
+
+  return Buffer.concat([header, ...entries, ...images.map((i) => i.png)])
+}
+
 /* ---------- 绘制 ---------- */
 
 const DARK = [15, 23, 42] // #0F172A
@@ -106,16 +138,24 @@ function drawBadge(size) {
   return px
 }
 
+function pngFor(size) {
+  return encodePng(size, drawBadge(size))
+}
+
 /* ---------- 输出 ---------- */
 
-const targets = [
-  { name: 'icon.png', size: 256 },
-  { name: 'tray.png', size: 32 }
-]
-
 mkdirSync(join(root, 'resources'), { recursive: true })
-for (const { name, size } of targets) {
-  const png = encodePng(size, drawBadge(size))
-  writeFileSync(join(root, 'resources', name), png)
-  console.log(`generated resources/${name} (${size}x${size}, ${png.length} bytes)`)
-}
+mkdirSync(join(root, 'build'), { recursive: true })
+
+const iconPng = pngFor(256)
+const trayPng = pngFor(32)
+writeFileSync(join(root, 'resources', 'icon.png'), iconPng)
+writeFileSync(join(root, 'resources', 'tray.png'), trayPng)
+
+const icoSizes = [16, 32, 48, 64, 128, 256]
+const ico = encodeIco(icoSizes.map((size) => ({ size, png: pngFor(size) })))
+writeFileSync(join(root, 'build', 'icon.ico'), ico)
+
+console.log(`generated resources/icon.png (256x256, ${iconPng.length} bytes)`)
+console.log(`generated resources/tray.png (32x32, ${trayPng.length} bytes)`)
+console.log(`generated build/icon.ico (${icoSizes.join('/')}, ${ico.length} bytes)`)

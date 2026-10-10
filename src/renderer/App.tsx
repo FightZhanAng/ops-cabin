@@ -5,6 +5,7 @@ import type { AppInfo } from '@shared/types'
 import { DiskView } from './views/DiskView'
 import { OverviewView } from './views/OverviewView'
 import { PortsView } from './views/PortsView'
+import { SettingsView } from './views/SettingsView'
 
 const NAV = [
   { key: 'overview', label: '总览' },
@@ -14,13 +15,6 @@ const NAV = [
 ] as const
 
 type NavKey = (typeof NAV)[number]['key']
-
-const PLACEHOLDER: Record<NavKey, string> = {
-  overview: '',
-  disk: '',
-  ports: '',
-  settings: '设置：白名单、清理计划、通知开关、更新。'
-}
 
 export function App(): JSX.Element {
   const [view, setView] = useState<NavKey>('overview')
@@ -85,12 +79,7 @@ export function App(): JSX.Element {
           ) : view === 'ports' ? (
             <PortsView />
           ) : (
-            <div className="p-6">
-              <div className="max-w-2xl rounded-[10px] border border-line bg-panel p-4 text-[13px] leading-relaxed text-dim">
-                {PLACEHOLDER[view]}
-                <div className="mt-2 text-[11px]">按里程碑实现中。</div>
-              </div>
-            </div>
+            <SettingsView />
           )}
         </section>
       </main>

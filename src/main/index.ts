@@ -12,9 +12,17 @@ import {
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { CleanMode, CleanOutcome, CleanRequestItem, ScanOutcome } from '../shared/disk'
+import type {
+  CleanMode,
+  CleanOutcome,
+  CleanRequestItem,
+  ScanOptions,
+  ScanOutcome
+} from '../shared/disk'
+import { formatBytes } from '../shared/format'
 import type { MetricsSample } from '../shared/metrics'
 import type { KillResult, PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
+import { DEFAULT_SETTINGS } from '../shared/settings'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
 import { Cleaner } from './cleaner'
 import { MetricsMonitor } from './metrics'
@@ -24,6 +32,7 @@ import { killProcess } from './ports/kill'
 import { WatchlistStore } from './ports/store'
 import { PortsMonitor } from './ports/watch'
 import { Scanner, parseScanOptions } from './scanner'
+import { ScanScheduler, type ScheduledScanSummary } from './scheduler'
 import { SettingsStore } from './settings'
 import { TrayController } from './tray'
 import { listVolumes } from './volumes'
@@ -44,6 +53,7 @@ let settingsStore: SettingsStore | null = null
 let scanner: Scanner | null = null
 let cleaner: Cleaner | null = null
 let metricsMonitor: MetricsMonitor | null = null
+let scheduler: ScanScheduler | null = null
 let portsMonitor: PortsMonitor | null = null
 let watchlistStore: WatchlistStore | null = null
 let portEvents: PortEventsStore | null = null
@@ -255,6 +265,28 @@ function notifyPortChanges(changes: PortChange[]): void {
   }
 }
 
+/** 计划扫描完成的通知：点开面板去磁盘页确认（不做自动删除） */
+function notifyScheduledScan(summary: ScheduledScanSummary): void {
+  try {
+    const notification = new Notification({
+      title: '计划扫描完成',
+      body:
+        summary.items > 0
+          ? `发现 ${summary.items} 项可清理（约 ${formatBytes(summary.bytes)}）—— 去磁盘页确认后清理`
+          : '这台机器很干净，没有发现可清理的项',
+      icon: appIconPath()
+    })
+    notification.on('click', () => showPanel())
+    notification.on('close', () => {
+      if (activeNotification === notification) activeNotification = null
+    })
+    activeNotification = notification
+    notification.show()
+  } catch {
+    /* 通知失败不阻塞 */
+  }
+}
+
 /* ------------------------------------------------------------ IPC 入参 */
 
 /** 校验渲染层传来的清理项（路径与字节数都要合理） */
@@ -335,6 +367,19 @@ function registerIpc(): void {
     if (!patch || typeof patch !== 'object') return settingsStore?.settings ?? null
     const applied = (settingsStore as SettingsStore).patch(patch as Partial<Settings>)
     applyTheme(applied.theme)
+    scheduler?.setPlan(applied.scanPlan)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('settings', applied)
+    }
+    return applied
+  })
+  ipcMain.handle('settings:reset', () => {
+    if (!settingsStore) return null
+    // 重置用户配置，但保留窗口位置（重置完窗口还在原地）
+    const bound = settingsStore.settings.windowBounds
+    const applied = settingsStore.patch({ ...DEFAULT_SETTINGS, windowBounds: bound })
+    applyTheme(applied.theme)
+    scheduler?.setPlan(applied.scanPlan)
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('settings', applied)
     }
@@ -342,20 +387,7 @@ function registerIpc(): void {
   })
 
   /* 磁盘扫描与清理 */
-  ipcMain.handle('scan:start', async (_event, raw: unknown): Promise<ScanOutcome> => {
-    if (!scanner) {
-      return { ok: false, cancelled: false, error: '扫描器未就绪' }
-    }
-    const outcome = await scanner.start(
-      parseScanOptions(raw),
-      settingsStore?.settings.whitelist ?? []
-    )
-    // 扫描结果同时登记给清理器：clean:run 只允许删除这份结果里的路径
-    if (outcome.ok) {
-      cleaner?.registerScanned(outcome.result.groups.flatMap((g) => g.items.map((i) => i.path)))
-    }
-    return outcome
-  })
+  ipcMain.handle('scan:start', (_event, raw: unknown) => runScanAndRegister(parseScanOptions(raw)))
   ipcMain.handle('scan:cancel', () => scanner?.cancel())
 
   ipcMain.handle('clean:run', (_event, rawItems: unknown, rawMode: unknown): Promise<CleanOutcome> => {
@@ -437,6 +469,27 @@ function registerIpc(): void {
   ipcMain.handle('metrics:unsubscribe', () => {
     metricsMonitor?.removeSubscriber()
   })
+
+  /* 设置与维护 */
+  ipcMain.handle('app:open-data-dir', () => {
+    const file = settingsStore?.dataFile
+    if (file) shell.showItemInFolder(file)
+    return file ?? ''
+  })
+  ipcMain.handle('ports:events:clear', () => {
+    portEvents?.clear()
+  })
+  ipcMain.handle('scheduler:check-now', () => scheduler?.checkNow() ?? Promise.resolve(false))
+}
+
+/** 跑一次扫描并把结果登记给清理器（IPC 与计划任务共用） */
+async function runScanAndRegister(options: ScanOptions): Promise<ScanOutcome> {
+  if (!scanner) return { ok: false, cancelled: false, error: '扫描器未就绪' }
+  const outcome = await scanner.start(options, settingsStore?.settings.whitelist ?? [])
+  if (outcome.ok) {
+    cleaner?.registerScanned(outcome.result.groups.flatMap((g) => g.items.map((i) => i.path)))
+  }
+  return outcome
 }
 
 /* ------------------------------------------------------------ 启动 */
@@ -470,6 +523,28 @@ if (!gotLock) {
       }
     })
     cleaner = new Cleaner()
+
+    scheduler = new ScanScheduler(
+      {
+        runScan: async () => {
+          const outcome = await runScanAndRegister({ groups: ['safe', 'devCaches'] })
+          if (!outcome.ok) return null
+          const items = outcome.result.groups.reduce((sum, group) => sum + group.items.length, 0)
+          const bytes = outcome.result.groups.reduce((sum, group) => sum + group.bytes, 0)
+          smoke('scheduled-scan', {
+            at: Date.now(),
+            items,
+            bytes,
+            durationMs: outcome.result.durationMs
+          })
+          return { items, bytes }
+        },
+        onDone: (summary) => notifyScheduledScan(summary),
+        onError: (message) => smoke('scheduled-scan-error', { at: Date.now(), message })
+      },
+      settingsStore.settings.scanPlan
+    )
+    scheduler.start()
 
     metricsMonitor = new MetricsMonitor({
       onSample: (sample) => {
@@ -530,6 +605,7 @@ if (!gotLock) {
   })
 
   app.on('will-quit', () => {
+    scheduler?.dispose()
     metricsMonitor?.dispose()
     portsMonitor?.dispose()
     scanner?.cancel()

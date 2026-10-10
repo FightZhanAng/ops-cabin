@@ -170,6 +170,16 @@ async function evaluate(cdp, expression, awaitPromise = false, timeoutMs = 60000
   return race.result?.value
 }
 
+/** 等待某个 DOM 条件成立（轮询求值） */
+async function waitForDom(cdp, expression, timeoutMs = 15000, stepMs = 400) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if ((await evaluate(cdp, expression)) === true) return true
+    await wait(stepMs)
+  }
+  return false
+}
+
 function launch() {
   currentChild = spawn(
     electronExe,
@@ -227,12 +237,17 @@ if (!page) {
 
   /* ---------- A. 基础采集与外部 netstat 对比 ---------- */
   console.log('== A. 基础采集与 netstat 对比 ==')
-  // 先离开总览页：总览（M6 起）会常驻订阅端口推送，测试的订阅计数需要干净环境
+  // 等 React 挂载后再离开总览页：总览（M6 起）会常驻订阅端口推送，
+  // 测试的订阅计数需要干净环境（不确认离开，卸载就不可靠）
+  await waitForDom(cdp, `document.querySelectorAll('nav button').length >= 4`, 15000)
   await evaluate(
     cdp,
     `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '磁盘')?.click(); 'ok'`
   )
-  await wait(800)
+  check(
+    '已离开总览页（进入磁盘页）',
+    await waitForDom(cdp, `!!document.querySelector('[data-testid="scan-start"]')`, 8000)
+  )
   const ext1 = collectNetstat()
   const snapshot = JSON.parse(
     await invoke('window.opsCabin.listPorts().then((s) => JSON.stringify(s))')

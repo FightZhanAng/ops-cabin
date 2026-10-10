@@ -130,6 +130,20 @@ const api = {
   runKill: (pid: number): Promise<KillResult> =>
     ipcRenderer.invoke('ports:kill', pid) as Promise<KillResult>,
 
+  /* 设置与维护 */
+  /** 重置全部设置为默认值（保留窗口位置） */
+  resetSettings: (): Promise<Settings | null> =>
+    ipcRenderer.invoke('settings:reset') as Promise<Settings | null>,
+  /** 在资源管理器里定位数据目录（settings.json 所在处） */
+  openDataDir: (): Promise<string> =>
+    ipcRenderer.invoke('app:open-data-dir') as Promise<string>,
+  /** 清空关注端口的变化记录 */
+  clearPortEvents: (): Promise<void> =>
+    ipcRenderer.invoke('ports:events:clear') as Promise<void>,
+  /** 立即执行一次「扫描计划到点检查」（设置页按钮与自检用） */
+  checkScanPlanNow: (): Promise<boolean> =>
+    ipcRenderer.invoke('scheduler:check-now') as Promise<boolean>,
+
   /** 退出应用 —— 托盘常驻模式下这是正常的退出出口（关窗只是隐藏） */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>
 }

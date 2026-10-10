@@ -30,6 +30,15 @@ export class PortEventsStore {
     return this.#read().slice(-limit).reverse()
   }
 
+  /** 清空全部变化记录 */
+  clear(): void {
+    try {
+      writeFileAtomic(this.#file, '[]\n')
+    } catch {
+      /* 忽略 */
+    }
+  }
+
   #read(): PortChange[] {
     try {
       if (!existsSync(this.#file)) return []

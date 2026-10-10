@@ -252,9 +252,15 @@ if (!page1) {
   check('设置更新经 IPC 生效', updated.notifyOnPortChange === false)
   check('设置已原子写盘', JSON.parse(readFileSync(settingsFile, 'utf8')).notifyOnPortChange === false)
 
-  // 移动窗口（物理 +120/+80），让"保存的是移动后的位置"可验证
+  // 移动窗口（物理 +120/+80），让"保存的是移动后的位置"可验证。
+  // 探针文件写出 ≠ 窗口已完成可见（show 是异步的），拿不到窗口句柄时重试几轮。
   const b0 = (await readJsonWhenReady(join(smokeDir, 'window.json'))).bounds
-  const moved = moveWindowBy(app1.pid, 120, 80)
+  let moved = ''
+  for (let i = 0; i < 8; i++) {
+    moved = moveWindowBy(app1.pid, 120, 80)
+    if (moved.startsWith('MOVED')) break
+    await wait(800)
+  }
   check('窗口被移动（Win32）', moved.startsWith('MOVED'), moved.replace(/\n/g, ' | ') || '无输出')
   await wait(600)
 
