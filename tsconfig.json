@@ -1,0 +1,12 @@
+{
+  // 编译实际走 tsconfig.node/web；这里补一份 paths 供工具（shadcn CLI 等）读取路径别名
+  "files": [],
+  "references": [{ "path": "./tsconfig.node.json" }, { "path": "./tsconfig.web.json" }],
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/renderer/*"],
+      "@shared/*": ["src/shared/*"]
+    }
+  }
+}

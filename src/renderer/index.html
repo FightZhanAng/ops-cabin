@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws://localhost:* http://localhost:*"
+    />
+    <title>运维舱</title>
+    <style>
+      /*
+       * 静态兜底样式：React 挂载后会整体替换掉 #root 里的内容。
+       * 有这段，"脚本没跑起来"和"窗口没显示"在屏幕上就能一眼区分开；
+       * 并跟随系统主题，避免深色系统下闪一帧白。
+       */
+      html {
+        color-scheme: light dark;
+      }
+      .boot {
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif;
+        font-size: 13px;
+        color: #64748b;
+        background: #f1f5f9;
+      }
+      @media (prefers-color-scheme: dark) {
+        .boot {
+          color: #94a3b8;
+          background: #0f172a;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot">正在启动运维舱…</div></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

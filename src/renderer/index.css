@@ -1,0 +1,114 @@
+@import 'tailwindcss';
+
+/*
+ * 运维舱设计令牌（Source of Truth：design-system/opscabin/MASTER.md）。
+ *
+ * 深色为设计基准，浅色跟随系统。主题只有一套机制：prefers-color-scheme ——
+ * 主进程把用户选择灌进 nativeTheme.themeSource，渲染层自动跟着变，
+ * 不需要给每个组件发主题状态，也不会出现「JS 还没跑起来时是错的颜色」的闪帧。
+ *
+ * 强调色纪律：signal 绿只出现在「活跃 / 关键动作」，红只给「危险动作与冲突」，
+ * 其余一律用墨阶（bg / panel / panel-2 / line / fg / dim）。
+ */
+
+:root {
+  color-scheme: light;
+
+  --bg: #f1f5f9;
+  --panel: #ffffff;
+  --panel-2: #f8fafc;
+  --line: #e2e8f0;
+  --fg: #0f172a;
+  --dim: #64748b;
+  --signal: #16a34a;
+  --warn: #d97706;
+  --danger: #dc2626;
+
+  --radius: 10px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+
+    --bg: #0f172a;
+    --panel: #1e293b;
+    --panel-2: #272f42;
+    --line: #334155;
+    --fg: #f8fafc;
+    --dim: #94a3b8;
+    --signal: #22c55e;
+    --warn: #f59e0b;
+    --danger: #ef4444;
+  }
+}
+
+@theme inline {
+  /* 运维舱令牌 → 工具类（bg-bg / text-fg / border-line / text-signal …） */
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-panel-2: var(--panel-2);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-dim: var(--dim);
+  --color-signal: var(--signal);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+
+  /* 字体：拉丁与数字交给系统粗排，中文落系统黑体；数据列一律 font-mono */
+  --font-sans: 'Microsoft YaHei UI', 'Microsoft YaHei', 'Noto Sans SC', 'Segoe UI', sans-serif;
+  --font-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, ui-monospace, monospace;
+
+  /* 圆角派生（shadcn 约定：rounded-lg = --radius） */
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* ---- shadcn 组件桥接层：组件读这些名字，值指回运维舱令牌 ---- */
+  --color-background: var(--bg);
+  --color-foreground: var(--fg);
+  --color-card: var(--panel);
+  --color-card-foreground: var(--fg);
+  --color-popover: var(--panel-2);
+  --color-popover-foreground: var(--fg);
+  --color-primary: var(--signal);
+  --color-primary-foreground: #052e16;
+  --color-secondary: var(--panel-2);
+  --color-secondary-foreground: var(--fg);
+  --color-muted: var(--panel-2);
+  --color-muted-foreground: var(--dim);
+  --color-accent: var(--panel-2);
+  --color-accent-foreground: var(--fg);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--signal);
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    /* 窗口级别不滚动，滚动发生在各主区容器里 */
+    overflow: hidden;
+  }
+
+  /* 键盘焦点必须可见（MASTER：Invisible focus states 是反模式） */
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--signal) 45%, transparent);
+    outline-offset: 1px;
+  }
+}
