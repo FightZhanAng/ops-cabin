@@ -2,8 +2,10 @@ import { app, BrowserWindow, ipcMain, Menu, nativeTheme, screen, shell } from 'e
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ScanOutcome } from '../shared/disk'
 import type { AppInfo, Settings, WindowBounds } from '../shared/types'
 import { appIconPath, preloadPath } from './paths'
+import { Scanner, parseScanOptions } from './scanner'
 import { SettingsStore } from './settings'
 import { TrayController } from './tray'
 
@@ -20,6 +22,7 @@ const MIN_WINDOW = { width: 960, height: 660 }
 let mainWindow: BrowserWindow | null = null
 let tray: TrayController | null = null
 let settingsStore: SettingsStore | null = null
+let scanner: Scanner | null = null
 let isQuitting = false
 
 /* ------------------------------------------------------------ 冒烟自检 */
@@ -224,6 +227,18 @@ function registerIpc(): void {
     }
     return applied
   })
+
+  /* 磁盘扫描 */
+  ipcMain.handle('scan:start', (_event, raw: unknown): Promise<ScanOutcome> => {
+    if (!scanner) {
+      return Promise.resolve({ ok: false, cancelled: false, error: '扫描器未就绪' })
+    }
+    return scanner.start(
+      parseScanOptions(raw),
+      settingsStore?.settings.whitelist ?? []
+    )
+  })
+  ipcMain.handle('scan:cancel', () => scanner?.cancel())
 }
 
 /* ------------------------------------------------------------ 启动 */
@@ -247,6 +262,14 @@ if (!gotLock) {
       file: settingsStore.dataFile,
       windowBounds: settingsStore.settings.windowBounds,
       theme: settingsStore.settings.theme
+    })
+
+    scanner = new Scanner({
+      onProgress: (progress) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('scan:progress', progress)
+        }
+      }
     })
 
     registerIpc()
@@ -279,6 +302,7 @@ if (!gotLock) {
   })
 
   app.on('will-quit', () => {
+    scanner?.cancel()
     tray?.destroy()
   })
 }

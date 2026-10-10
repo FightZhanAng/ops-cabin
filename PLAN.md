@@ -55,27 +55,22 @@
 
 ---
 
-## 3. M2 磁盘扫描引擎（纯主进程侧，无 UI 闭环）
+## 3. M2 磁盘扫描引擎 —— 已完成（2026-10-10）
 
-**目标**：给定目录集合，产出分级清理候选列表，可取消、可看进度、不卡 UI。
+**产出**：
+- `src/shared/disk.ts`：`ScanItem` / `ScanGroupResult` / `ScanProgress` / `ScanResult` / `ScanOutcome` / `ScanOptions`
+- `src/main/scanner/categories.ts`：分级位置清单（安全清理 4 处 + 开发缓存 10 处）、`%ENV%`/`~` 展开、白名单前缀归一、大文件遍历跳过名单
+- `src/main/scanner/worker.ts`：扫描执行（utilityProcess 入口）——迭代式遍历、目录链接/junction 不跟进、权限拒绝计数不中断、进度 200ms 节流、同目录文件 stat 批量并发
+- `src/main/scanner/index.ts`：`Scanner` 任务管理（同一时刻一个任务；新 start 自动接管旧任务；取消 = 终止进程）+ `parseScanOptions` 入参收敛
+- `electron.vite.config.ts` 多入口（产出 `out/main/scanner.js`）；IPC `scan:start` / `scan:cancel` + `scan:progress` 推送；preload 桥 `startScan` / `cancelScan` / `onScanProgress`
 
-**文件**：
-- 新建 `src/main/scanner/scan.ts`：扫描任务本体（递归遍历、大小统计、跳过名单、取消信号、进度节流推送）
-- 新建 `src/main/scanner/categories.ts`：分级规则表——安全清理（临时文件 / 回收站 / 缩略图缓存）、开发缓存（npm / pnpm / pip / cargo / go / IDE 缓存）、大文件（>100MB Top N）
-- 新建 `src/main/scanner/index.ts`：任务管理（同一时刻一个任务；start / cancel / 状态查询）
-- 新建 `src/shared/disk.ts`：`ScanItem` / `ScanGroup` / `ScanProgress` 类型（渲染层复用）
-- 修改 `electron.vite.config.ts`：main 增加扫描进程入口（`utilityProcess` 多入口构建）
+**与计划的差异**：不做「回收站」目标（删除语义特殊，与 M3 清理动作一起做）；原计划的单文件 `scan.ts` 合并进 `worker.ts`。
 
-**实现要点**：
-- 扫描跑在 `utilityProcess`（独立进程 + postMessage），进度每 200ms 节流一条
-- 白名单（设置里的保护目录）+ 系统黑名单（`C:\Windows`、`Program Files` 等）在遍历层直接跳过
-- 权限拒绝的目录：记录 `skipped` 计数继续，不中断
-- 扫描产物：分组候选列表（每组含条目数、总大小、风险等级）
-
-**验收**：
-- 扫描本机 Temp + 开发缓存目录，产物条目与手工核对一致
-- 10 万文件级扫描期间 UI 可交互、可取消（取消后 1s 内停止）
-- 白名单目录不出现在结果里
+**验收（`scripts/e2e-scan.mjs`，21 项全绿）**：
+- 产物精确核对：夹具 4 个大文件逐个命中（2MB×4，合计 8MB），128B 小文件不入榜
+- 白名单目录不出现在结果里（4 → 3）
+- 3 万文件级扫描期间渲染进程响应 3ms；取消 166ms 内结束；接管语义正确
+- 性能：stat 批量并发 + `UV_THREADPOOL_SIZE=16`，本机 %TEMP% 全量扫描 21.6s → 8.9s
 
 ---
 
@@ -240,18 +235,20 @@
 
 ---
 
-## 13. 下一里程碑的入口
+## 13. 里程碑路线图状态
 
-- 托盘图标资源：用临时占位图标（M8 换正式图标）
-- shadcn 组件一律用 `pnpm dlx shadcn@latest add <组件> --yes` 获取（已验证可用，见 §14），不手抄源码
+- M0 骨架 ✓（2026-10-10）/ M1 主进程地基 ✓（2026-10-10）/ M2 扫描引擎 ✓（2026-10-10）
+- 下一个：**M3 磁盘页**（结果表 + 多选 + 预览 + 清理闭环）。开工前准备：第一批 shadcn 组件（`button` `alert-dialog` `table` `tabs` `checkbox` `progress` `sonner`）+ 回收站删除方案落地（`trash` 包或 PowerShell Shell.Application 二选一）
 
 ---
 
-## 14. 环境与运行备忘（M0 验证记录）
+## 14. 环境与运行备忘（验证记录）
 
 **运行命令**：
 - `pnpm dev`（开发，HMR）/ `pnpm build` / `pnpm typecheck`
 - `pnpm exec install-electron`：`node_modules/electron/dist` 缺失时补装二进制（幂等）
+- `node scripts/e2e-check.mjs`：M1 端到端检查（设置 / 窗口记忆 / 托盘 / 退出）
+- `node scripts/e2e-scan.mjs`：M2 端到端检查（扫描产物 / 白名单 / 取消 / 接管 / 进度）
 
 **electron 二进制（本机特殊）**：本机 hosts 屏蔽了 GitHub，electron 直连下载不可达。已配两层：
 - `.npmrc`：`electron_mirror=https://npmmirror.com/mirrors/electron/`
@@ -264,12 +261,15 @@
 **M0 验证结果（全绿）**：
 - `pnpm typecheck` ✓ / `pnpm build` ✓
 - 生产形态冒烟：窗口标题「运维舱」、React 渲染出侧栏（总览/磁盘/端口/设置）、`window.opsCabin` 桥存在、`app:info` 返回 v0.1.0 / Electron 43.3.0
-- 开发模式冒烟：加载 `http://localhost:5173/`，DOM 与桥同上（验证用的外部临时脚本已删除，M8 正式化冒烟机制）
+- 开发模式冒烟：加载 `http://localhost:5173/`，DOM 与桥同上
 
 **M1 验证结果（e2e 全绿，15 项）**：`node scripts/e2e-check.mjs` 覆盖 ——
 损坏设置回退与 `.bad` 留档 / 设置原子写盘 / 窗口移动 → 关窗保存 → 重启恢复 /
-关窗隐藏不退出 / 托盘图标非空 / `app:quit` 出口。冒烟产物落在 `%TEMP%/ops-cabin-smoke/`
-（`OPS_CABIN_SMOKE=1` 时生成）。
+关窗隐藏不退出 / 托盘图标非空 / `app:quit` 出口。冒烟产物落在 `%TEMP%/ops-cabin-smoke/`。
 
-**git**：已 `git init`（main 分支），尚无提交 —— 建议尽快打基线提交（M0 + M1 已形成可回归的完整节点）。
+**M2 验证结果（e2e 全绿，21 项）**：`node scripts/e2e-scan.mjs` 覆盖 ——
+夹具大文件精确核对 / 白名单排除 / 3 万文件级取消（166ms）/ 接管语义 / 进度推送 /
+扫描期间渲染进程响应 3ms。性能基线：本机 %TEMP% 全量扫描 8.9s（优化前 21.6s）。
+
+**git**：基线提交 `a50873e`（M0+M1）；M2 改动待提交。
 

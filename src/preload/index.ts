@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ScanOptions, ScanOutcome, ScanProgress } from '../shared/disk'
 import type { AppInfo, Settings } from '../shared/types'
 
 /*
@@ -24,6 +25,20 @@ const api = {
     ipcRenderer.on('settings', listener)
     return () => {
       ipcRenderer.off('settings', listener)
+    }
+  },
+
+  /* 磁盘扫描 */
+  /** 启动扫描；已有任务会被「接管」（先取消旧的，再开新的） */
+  startScan: (options: ScanOptions): Promise<ScanOutcome> =>
+    ipcRenderer.invoke('scan:start', options) as Promise<ScanOutcome>,
+  cancelScan: (): Promise<void> => ipcRenderer.invoke('scan:cancel') as Promise<void>,
+  /** 扫描进度推送（约每 200ms 一条） */
+  onScanProgress: (handler: (progress: ScanProgress) => void): (() => void) => {
+    const listener = (_event: unknown, progress: ScanProgress): void => handler(progress)
+    ipcRenderer.on('scan:progress', listener)
+    return () => {
+      ipcRenderer.off('scan:progress', listener)
     }
   },
 

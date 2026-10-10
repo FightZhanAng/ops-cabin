@@ -24,7 +24,11 @@ export default defineConfig({
     build: {
       rollupOptions: {
         external: nodeExternals,
-        input: { index: resolve(__dirname, 'src/main/index.ts') },
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          // 扫描执行进程（utilityProcess）：独立进程跑 fs 遍历，不卡主进程
+          scanner: resolve(__dirname, 'src/main/scanner/worker.ts')
+        },
         output: cjsOutput
       }
     }
