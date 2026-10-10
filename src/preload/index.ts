@@ -17,6 +17,7 @@ import type {
   WatchItem
 } from '../shared/ports'
 import type { AppInfo, Settings } from '../shared/types'
+import type { UpdateState } from '../shared/update'
 
 /*
  * 渲染层能碰到的全部能力 —— 就下面这些。
@@ -143,6 +144,25 @@ const api = {
   /** 立即执行一次「扫描计划到点检查」（设置页按钮与自检用） */
   checkScanPlanNow: (): Promise<boolean> =>
     ipcRenderer.invoke('scheduler:check-now') as Promise<boolean>,
+
+  /* 版本更新 */
+  getUpdate: (): Promise<UpdateState | null> =>
+    ipcRenderer.invoke('update:get') as Promise<UpdateState | null>,
+  checkUpdate: (): Promise<UpdateState | null> =>
+    ipcRenderer.invoke('update:check') as Promise<UpdateState | null>,
+  downloadUpdate: (): Promise<UpdateState | null> =>
+    ipcRenderer.invoke('update:download') as Promise<UpdateState | null>,
+  /** 下载完成后重启并安装（会退出应用） */
+  installUpdate: (): Promise<void> => ipcRenderer.invoke('update:install') as Promise<void>,
+  openReleasePage: (): Promise<void> => ipcRenderer.invoke('update:open-page') as Promise<void>,
+  /** 更新状态推送（检查/下载/安装各阶段） */
+  onUpdate: (handler: (state: UpdateState) => void): (() => void) => {
+    const listener = (_event: unknown, state: UpdateState): void => handler(state)
+    ipcRenderer.on('update', listener)
+    return () => {
+      ipcRenderer.off('update', listener)
+    }
+  },
 
   /** 退出应用 —— 托盘常驻模式下这是正常的退出出口（关窗只是隐藏） */
   quit: (): Promise<void> => ipcRenderer.invoke('app:quit') as Promise<void>

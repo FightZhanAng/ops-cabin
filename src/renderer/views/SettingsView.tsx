@@ -5,6 +5,7 @@ import type { AppInfo, Settings, ThemeMode } from '@shared/types'
 import { DangerZone } from '@/components/settings/DangerZone'
 import { ScanPlanEditor } from '@/components/settings/ScanPlanEditor'
 import { ThemePicker } from '@/components/settings/ThemePicker'
+import { UpdateSection } from '@/components/settings/UpdateSection'
 import { WhitelistEditor } from '@/components/settings/WhitelistEditor'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
@@ -137,6 +138,16 @@ export function SettingsView(): JSX.Element {
 
         <Section title="清理计划" desc="按计划自动扫描（只扫不删），完成后发通知。">
           <ScanPlanEditor plan={settings.scanPlan} onChange={(plan) => void patch({ scanPlan: plan })} />
+        </Section>
+
+        <Section
+          title="更新"
+          desc="检查 / 下载 / 安装三段分开，安装永远由你点；免安装版请到发布页手动更新。"
+        >
+          <UpdateSection
+            autoCheck={settings.autoCheckUpdate}
+            onAutoCheckChange={(value) => void patch({ autoCheckUpdate: value })}
+          />
         </Section>
 
         <Section title="关于">

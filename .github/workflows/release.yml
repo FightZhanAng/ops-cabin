@@ -1,0 +1,54 @@
+# 发版流水线：打 tag（v*）→ typecheck → 打包 Windows 安装版 / 免安装版 → 建 Release。
+#
+# 注意：本文件尚未在真实 CI 上实跑过（开发机屏蔽 GitHub）；首次发版时留意两点：
+#   1. Release 里必须包含 latest.yml 与 *.blockmap —— 缺了它们，应用内检查更新会永远报错；
+#   2. 若 electron 二进制下载缓慢，可把 ELECTRON_MIRROR 改回镜像地址。
+name: release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          # 显式覆盖 .npmrc 里的镜像：CI 在 GitHub 网络上，直连更稳
+          ELECTRON_MIRROR: 'https://github.com/electron/electron/releases/download/'
+          ELECTRON_BUILDER_BINARIES_MIRROR: 'https://github.com/electron-userland/electron-builder-binaries/releases/download/'
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build & Package
+        run: pnpm dist
+
+      - name: Upload Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*-setup.exe
+            release/*-portable.exe
+            release/latest.yml
+            release/*.blockmap

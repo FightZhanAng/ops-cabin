@@ -4,6 +4,7 @@ export const DEFAULT_SETTINGS: Settings = {
   theme: 'system',
   windowBounds: null,
   notifyOnPortChange: true,
+  autoCheckUpdate: true,
   scanPlan: { mode: 'manual', time: '10:00' },
   whitelist: []
 }
@@ -39,6 +40,7 @@ export function sanitizeSettings(raw: unknown): Settings {
   }
 
   if (typeof obj.notifyOnPortChange === 'boolean') out.notifyOnPortChange = obj.notifyOnPortChange
+  if (typeof obj.autoCheckUpdate === 'boolean') out.autoCheckUpdate = obj.autoCheckUpdate
 
   const sp = obj.scanPlan
   if (sp !== null && typeof sp === 'object') {

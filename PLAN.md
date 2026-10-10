@@ -169,20 +169,23 @@
 
 ---
 
-## 9. M8 打包发版 + 冒烟自检
+## 9. M8 打包发版 + 冒烟自检 —— 已完成（2026-10-10）
 
-**目标**：能安装、能更新、能自检。
+**产出**：
+- `electron-builder.yml` + `scripts/dist.mjs`：NSIS 安装版 + portable；dist 经 `pnpm exec` 调 electron-builder（项目路径含空格与中文，直接拼 cmd 命令会被截断），并为工具链设 npmmirror 镜像
+- `scripts/gen-icons.mjs` 扩展出手写 ICO（16/32/48/64/128/256，无外部依赖）→ `build/icon.ico`
+- `src/main/updater.ts`：`UpdateController` —— 检查 / 下载 / 安装三段式（下载与安装从不自动发生）；每天自动检查（可在设置关闭）；免安装版与开发模式显示「不支持」并给出去处；`OPS_CABIN_FAKE_UPDATE=x.y.z` 可在不联网时驱动整个更新界面（自检用）
+- 设置页「更新」分组：当前版本、检查更新、下载进度、重启并安装、发布页、自动检查开关
+- `src/main/smoke.ts`：应用内冒烟 —— 探针写文件（`OPS_CABIN_SMOKE=1`）与驱动界面（`OPS_CABIN_SMOKE_DRIVE=1`）分离；驱动模式走一遍四个页面、真实磁盘扫描、**自开一个端口并在端口页找回来**、落 DOM 事实与截图；`OPS_CABIN_SMOKE_THEME` 支持深浅两轮
+- `.github/workflows/release.yml`：tag → typecheck → 打包 → Release（含 latest.yml 与 blockmap；**未在真实 CI 实跑过**）
 
-**文件**：
-- 新建 `electron-builder.yml` + `scripts/dist.mjs`（`--win --publish never`；NSIS 安装版 + portable）
-- 新建 `scripts/gen-icons.mjs`（图标）
-- 新建 `.github/workflows/release.yml`（tag → typecheck + 打包 + Release 上传 `latest.yml` + blockmap）
-- 接入 `electron-updater`（三段式：检查/下载/安装分离，从不自动安装）
-- 冒烟自检（复刻参考项目模式，环境变量 `OPS_CABIN_SMOKE=1`）：落盘 `window.json`、`view-*.json`（DOM 事实）、`screen-*.png`；磁盘自检在 Temp 造固定测试文件断言扫描结果；端口自检断言"能列出当前监听端口且包含自检自己开的端口"
+**与计划的差异**：不做 `api-failures` 全局对账（数据源是本机系统命令，失败会体现在视图事实里）；「安装版可启动」用 win-unpacked 验证（NSIS 安装流程留人工）。
 
-**验收**：
-- `pnpm dist` 产出 setup 与 portable；安装版可启动
-- 冒烟自检一轮全绿（含 `api-failures` 为空这类对账文件）
+**验收（e2e 全绿）**：
+- `pnpm dist` 产出 `ops-cabin-0.1.0-setup.exe`（96MB）/ `-portable.exe`（96MB）/ `latest.yml` / `setup.exe.blockmap`
+- 打包产物启动：React 渲染、版本 0.1.0、更新分组在打包形态下可用（e2e-portable 12 项）
+- 冒烟两轮（浅色 / 深色）30 项：四个页面 DOM 事实、**自检端口被端口页列出**、四张截图各一轮
+- 更新流程 22 项（fake 版本驱动：检查 → 发现 → 下载进度 → 已就绪）
 
 ---
 
@@ -232,8 +235,8 @@
 
 ## 13. 里程碑路线图状态
 
-- M0 骨架 ✓ / M1 主进程地基 ✓ / M2 扫描引擎 ✓ / M3 磁盘页 ✓ / M4 端口引擎 ✓ / M5 端口页 ✓ / M6 总览页 ✓ / M7 设置页 ✓（均 2026-10-10）
-- 下一个：**M8 打包发版 + 冒烟自检**（electron-builder / CI / electron-updater / 设置页「更新」分组）
+- **M0–M8 全部完成 ✓（2026-10-10）** —— 「运维舱」具备：系统资源总览、磁盘分级扫描与安全清理（回收站可恢复）、端口雷达（关注清单 + 变化通知）、设置与清理计划、打包发版与自动更新
+- 后续候选（非本期）：重复文件检测、清理历史统计、端口历史时间线、启动项管理、大目录迁移、磁盘 IO / 网络速率、托盘菜单快捷扫描、README / 使用文档
 
 ---
 
@@ -301,5 +304,25 @@ M4 的 e2e 需要适配 —— 开头先离开总览页（订阅计数才干净�
 M4 的「离开总览页」在 React 挂载前点击会落空，导致总览常驻订阅干扰订阅计数。
 修复后六套连跑全绿。
 
-**git**：已提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）、`be1f35e`（M3）、`a1f83a5`（M4）、`7f8081d`（M5）、`5004345`（M6）；M7 改动待提交。
+**git**：已提交 `a50873e`（M0+M1）、`3a0ebb8`（M2）、`be1f35e`（M3）、`a1f83a5`（M4）、`7f8081d`（M5）、`5004345`（M6）、`e251942`（M7）；M8 改动待提交（最后一批）。
+
+---
+
+## 15. 项目收官状态（2026-10-10）
+
+**九套 e2e 全绿，共 229 项断言**：`e2e-check`(15) / `e2e-disk`(34) / `e2e-ports`(22) /
+`e2e-ports-m5`(35) / `e2e-overview`(22) / `e2e-settings`(37) / `e2e-update`(22) /
+`e2e-smoke`(30，深浅两轮) / `e2e-portable`(12)。
+
+**M8 期间的产品级修复**：`sanitizeSettings` 漏了 `autoCheckUpdate` 字段 ——
+「关闭自动检查更新」在设置页切了也写不进去（被 sanitize 丢回默认值），由 e2e-update 抓出并修复。
+
+**打包链路三个坑（均已解决、已记录）**：
+1. 项目路径含空格与中文 → `scripts/dist.mjs` 经 `pnpm exec` 调 electron-builder（避免 cmd 传参被截断）；
+2. electron-builder 工具链下载需 npmmirror 镜像（本机 GitHub 不可达）；
+3. 冒烟「驱动界面」与普通 e2e 的操作互相抢戏 → 拆成 `OPS_CABIN_SMOKE_DRIVE` 独立开关（普通 e2e 只保留无害的探针写文件）。
+
+**人工待办（自动化覆盖不到）**：双击 `ops-cabin-0.1.0-setup.exe` 走一遍安装/卸载；
+双击 portable 版体验免安装形态；真实 GitHub 发版（需先建 `FightZhanAng/ops-cabin` 仓库，
+CI 文件已就绪但未实跑）。
 

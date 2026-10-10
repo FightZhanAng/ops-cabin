@@ -31,6 +31,8 @@ export interface Settings {
   windowBounds: WindowBounds | null
   /** 关注端口变化时推系统通知 */
   notifyOnPortChange: boolean
+  /** 每天自动检查一次新版本（发现后也要手动点下载） */
+  autoCheckUpdate: boolean
   scanPlan: ScanPlan
   /** 永不清理的保护目录（扫描与清理都跳过） */
   whitelist: string[]

@@ -1,0 +1,32 @@
+appId: com.tomcato.ops-cabin
+productName: 运维舱
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - node_modules/**
+extraResources:
+  - from: resources
+    to: resources
+win:
+  icon: build/icon.ico
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: always
+  shortcutName: 运维舱
+  artifactName: ops-cabin-${version}-setup.${ext}
+portable:
+  artifactName: ops-cabin-${version}-portable.${ext}
+publish:
+  provider: github
+  owner: FightZhanAng
+  repo: ops-cabin

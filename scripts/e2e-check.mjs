@@ -71,7 +71,8 @@ async function waitForReadyPage(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const targets = await listTargets()
-    const page = targets?.find((t) => t.type === 'page' && t.title)
+    // 文档解析完成前，CDP 报的标题是文件名（index.html）——等真正的 <title> 生效
+    const page = targets?.find((t) => t.type === 'page' && t.title && t.title !== 'index.html')
     if (page) return page
     await wait(400)
   }

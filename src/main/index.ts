@@ -9,8 +9,6 @@ import {
   screen,
   shell
 } from 'electron'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type {
   CleanMode,
@@ -34,7 +32,9 @@ import { PortsMonitor } from './ports/watch'
 import { Scanner, parseScanOptions } from './scanner'
 import { ScanScheduler, type ScheduledScanSummary } from './scheduler'
 import { SettingsStore } from './settings'
+import { SMOKE, SMOKE_DRIVE, SMOKE_THEME, runSmoke, smoke } from './smoke'
 import { TrayController } from './tray'
+import { UpdateController } from './updater'
 import { listVolumes } from './volumes'
 
 const APP_ID = app.isPackaged ? 'com.tomcato.ops-cabin' : 'com.tomcato.ops-cabin.dev'
@@ -47,6 +47,9 @@ const WINDOW_BG = { light: '#f1f5f9', dark: '#0f172a' }
 const DEFAULT_BOUNDS = { width: 1180, height: 800 }
 const MIN_WINDOW = { width: 960, height: 660 }
 
+/** 发布页：更新检查失败与免安装版的兜底都指这里（与 electron-builder.yml 的 publish 同仓） */
+const RELEASE_PAGE = 'https://github.com/FightZhanAng/ops-cabin/releases'
+
 let mainWindow: BrowserWindow | null = null
 let tray: TrayController | null = null
 let settingsStore: SettingsStore | null = null
@@ -54,6 +57,7 @@ let scanner: Scanner | null = null
 let cleaner: Cleaner | null = null
 let metricsMonitor: MetricsMonitor | null = null
 let scheduler: ScanScheduler | null = null
+let updater: UpdateController | null = null
 let portsMonitor: PortsMonitor | null = null
 let watchlistStore: WatchlistStore | null = null
 let portEvents: PortEventsStore | null = null
@@ -61,25 +65,7 @@ let portEvents: PortEventsStore | null = null
 let activeNotification: Notification | null = null
 let isQuitting = false
 
-/* ------------------------------------------------------------ 冒烟自检 */
-
-// 结论写磁盘而不是 console.log —— Windows 上 GUI 进程不挂控制台，
-// 只靠 stdout 经常什么都看不到，"跑没跑起来"都判断不了。
-const SMOKE = process.env['OPS_CABIN_SMOKE'] === '1'
-
-function smokeDir(): string {
-  return join(tmpdir(), 'ops-cabin-smoke')
-}
-
-function smoke(name: string, payload: unknown): void {
-  if (!SMOKE) return
-  try {
-    mkdirSync(smokeDir(), { recursive: true })
-    writeFileSync(join(smokeDir(), `${name}.json`), JSON.stringify(payload, null, 2), 'utf8')
-  } catch {
-    /* 自检失败不该影响主流程 */
-  }
-}
+/* ------------------------------------------------------------ 冒烟自检（实现见 smoke.ts） */
 
 // 模块最顶层就落一个探针：只有它出现、后续报告缺失，
 // 说明是 requestSingleInstanceLock 之后没走通，而不是代码没加载。
@@ -480,6 +466,19 @@ function registerIpc(): void {
     portEvents?.clear()
   })
   ipcMain.handle('scheduler:check-now', () => scheduler?.checkNow() ?? Promise.resolve(false))
+
+  /* 版本更新 */
+  ipcMain.handle('update:get', () => updater?.describe() ?? null)
+  ipcMain.handle('update:check', () => {
+    updater?.check()
+    return updater?.describe() ?? null
+  })
+  ipcMain.handle('update:download', () => {
+    updater?.download()
+    return updater?.describe() ?? null
+  })
+  ipcMain.handle('update:install', () => updater?.install())
+  ipcMain.handle('update:open-page', () => updater?.openReleasePage())
 }
 
 /** 跑一次扫描并把结果登记给清理器（IPC 与计划任务共用） */
@@ -546,6 +545,22 @@ if (!gotLock) {
     )
     scheduler.start()
 
+    // 自检时允许强制主题（深浅两套配色各跑一轮）
+    if (SMOKE && (SMOKE_THEME === 'light' || SMOKE_THEME === 'dark')) {
+      settingsStore.patch({ theme: SMOKE_THEME })
+      applyTheme(SMOKE_THEME)
+    }
+
+    updater = new UpdateController({
+      getAutoCheck: () => settingsStore?.settings.autoCheckUpdate ?? true,
+      onChange: (state) => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('update', state)
+        }
+      },
+      releasePage: RELEASE_PAGE
+    })
+
     metricsMonitor = new MetricsMonitor({
       onSample: (sample) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
@@ -586,6 +601,12 @@ if (!gotLock) {
     })
     smoke('tray', tray.iconInfo())
 
+    updater.scheduleStartupCheck()
+    updater.startPeriodicCheck()
+
+    // 冒烟驱动（只有对账脚本开启）：主进程侧驱动界面走一圈并落盘
+    if (SMOKE_DRIVE && mainWindow) void runSmoke(mainWindow)
+
     nativeTheme.on('updated', () => {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.setBackgroundColor(currentBg())
@@ -605,6 +626,7 @@ if (!gotLock) {
   })
 
   app.on('will-quit', () => {
+    updater?.dispose()
     scheduler?.dispose()
     metricsMonitor?.dispose()
     portsMonitor?.dispose()
