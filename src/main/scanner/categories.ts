@@ -1,4 +1,5 @@
 import { existsSync, readdirSync } from 'node:fs'
+import type { Dirent } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { RiskLevel, ScanGroupKey } from '../../shared/disk'
@@ -229,7 +230,7 @@ function expandCandidate(candidate: string): { path: string; suffix?: string }[]
     .filter((segment) => segment.length > 0)
   if (base.length === 0 || !existsSync(base)) return []
 
-  let entries: ReturnType<typeof readdirSync>
+  let entries: Dirent<string>[]
   try {
     entries = readdirSync(base, { withFileTypes: true })
   } catch {
