@@ -357,10 +357,12 @@ if (!page) {
 
   /* ---------- G. 危险区：清空变化记录 ---------- */
   console.log('== G. 清空变化记录 ==')
-  serverA = startServer(PORT_A)
-  await wait(1200)
+  // 基线语义（ports/watch.ts #pendingBaseline）：刚关注时已在监听的端口不报变化 ——
+  // 先关注（此刻端口空闲）→ 越过一个采样周期让基线成立 → 再起服务，才能看到干净的 occupy。
   await invoke(`window.opsCabin.addWatch({ port: ${PORT_A}, label: '设置页测试' }).then((w) => JSON.stringify(w))`)
-  // 设置页没有端口订阅，后台轮询 5s 一拍 —— 轮询等待事件出现（含采集耗时）
+  await wait(6500) // 设置页没有端口订阅，后台 5s 一拍：这里越过首拍（建立基线）
+  serverA = startServer(PORT_A)
+  // 轮询等待变化事件出现（含采集耗时）
   let eventsBefore = []
   const gDeadline = Date.now() + 20000
   while (Date.now() < gDeadline) {

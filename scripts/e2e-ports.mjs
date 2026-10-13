@@ -242,7 +242,8 @@ if (!page) {
   await waitForDom(cdp, `document.querySelectorAll('nav button').length >= 4`, 15000)
   await evaluate(
     cdp,
-    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '磁盘')?.click(); 'ok'`
+    // 按 testid 导航：侧栏按钮里现在还会渲染徽标文本（M14 起），按 textContent 精确匹配会落空
+    `document.querySelector('[data-testid="nav-disk"]')?.click(); 'ok'`
   )
   check(
     '已离开总览页（进入磁盘页）',

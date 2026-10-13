@@ -2,7 +2,13 @@ import { app } from 'electron'
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import type { CleanFailure, CleanMode, CleanOutcome, CleanRequestItem } from '../shared/disk'
+import type {
+  CleanFailure,
+  CleanHistoryEntry,
+  CleanMode,
+  CleanOutcome,
+  CleanRequestItem
+} from '../shared/disk'
 import { writeFileAtomic } from './atomic'
 import { runPowerShell } from './powershell'
 import { isExcluded, normalizeForCompare } from './scanner/categories'
@@ -19,11 +25,33 @@ const PROTECTED_PATHS = [
 const HISTORY_LIMIT = 200
 const MAX_ITEMS_PER_RUN = 500
 
-interface HistoryEntry {
-  at: number
-  mode: CleanMode
-  freedBytes: number
-  itemCount: number
+/** 读历史文件（损坏 / 缺字段的条目直接丢弃：统计图宁少勿错；一律返回时间升序） */
+function readHistory(file: string): CleanHistoryEntry[] {
+  try {
+    if (!existsSync(file)) return []
+    const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'))
+    if (!Array.isArray(parsed)) return []
+    // 排序不靠写入顺序兜底：文件被手工改过 / 系统时间回拨时，「最近一次」仍要对
+    return parsed.filter(isHistoryEntry).sort((a, b) => a.at - b.at)
+  } catch {
+    return []
+  }
+}
+
+function isHistoryEntry(value: unknown): value is CleanHistoryEntry {
+  if (value === null || typeof value !== 'object') return false
+  const record = value as Record<string, unknown>
+  return (
+    typeof record.at === 'number' &&
+    Number.isFinite(record.at) &&
+    (record.mode === 'recycle' || record.mode === 'permanent') &&
+    typeof record.freedBytes === 'number' &&
+    Number.isFinite(record.freedBytes) &&
+    record.freedBytes >= 0 &&
+    typeof record.itemCount === 'number' &&
+    Number.isFinite(record.itemCount) &&
+    record.itemCount >= 0
+  )
 }
 
 /**
@@ -45,6 +73,11 @@ export class Cleaner {
   /** 扫描完成时登记可删除路径 —— clean:run 只认这份集合里的路径 */
   registerScanned(paths: string[]): void {
     this.#scanned = new Set(paths.map((p) => normalizeForCompare(p)))
+  }
+
+  /** 清理历史（按时间升序；总览的统计图消费） */
+  history(): CleanHistoryEntry[] {
+    return readHistory(this.#historyFile)
   }
 
   async run(items: CleanRequestItem[], mode: CleanMode, whitelist: string[]): Promise<CleanOutcome> {
@@ -105,16 +138,14 @@ export class Cleaner {
     return null
   }
 
-  #appendHistory(entry: HistoryEntry): void {
+  #appendHistory(entry: CleanHistoryEntry): void {
     try {
-      let list: HistoryEntry[] = []
-      if (existsSync(this.#historyFile)) {
-        const parsed: unknown = JSON.parse(readFileSync(this.#historyFile, 'utf8'))
-        if (Array.isArray(parsed)) list = parsed as HistoryEntry[]
-      }
+      const list = readHistory(this.#historyFile)
       list.push(entry)
-      if (list.length > HISTORY_LIMIT) list = list.slice(-HISTORY_LIMIT)
-      writeFileAtomic(this.#historyFile, `${JSON.stringify(list, null, 2)}\n`)
+      writeFileAtomic(
+        this.#historyFile,
+        `${JSON.stringify(list.length > HISTORY_LIMIT ? list.slice(-HISTORY_LIMIT) : list, null, 2)}\n`
+      )
     } catch {
       /* 历史落盘失败不影响清理结果 */
     }

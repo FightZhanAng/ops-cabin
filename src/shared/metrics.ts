@@ -7,4 +7,8 @@ export interface MetricsSample {
   memUsed: number
   /** 总内存（字节） */
   memTotal: number
+  /** 下行字节/秒；还没攒够两次网卡计数时为 null（界面显示 —） */
+  netRxBps: number | null
+  /** 上行字节/秒；同 netRxBps */
+  netTxBps: number | null
 }

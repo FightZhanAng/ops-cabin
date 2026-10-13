@@ -1,45 +1,18 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { JSX, ReactNode } from 'react'
+import type { JSX } from 'react'
 import { toast } from 'sonner'
 import type { AppInfo, Settings, ThemeMode } from '@shared/types'
 import { Lamp } from '@/components/instrument/lamp'
 import { Bay, Plate } from '@/components/instrument/plate'
 import { DangerZone } from '@/components/settings/DangerZone'
+import { NotifySection } from '@/components/settings/NotifySection'
 import { ScanPlanEditor } from '@/components/settings/ScanPlanEditor'
+import { SettingRow } from '@/components/settings/SettingRow'
 import { ThemePicker } from '@/components/settings/ThemePicker'
 import { UpdateSection } from '@/components/settings/UpdateSection'
 import { WhitelistEditor } from '@/components/settings/WhitelistEditor'
 import { Button } from '@/components/ui/button'
-import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
-
-/** 设置行：左标签 + 右控件，行间 1px 发丝线 */
-function Row({
-  label,
-  hint,
-  children,
-  className
-}: {
-  label: string
-  hint?: string
-  children: ReactNode
-  className?: string
-}): JSX.Element {
-  return (
-    <div
-      className={cn(
-        'flex min-h-[38px] items-center justify-between gap-4 border-b border-line px-3.5 py-1.5 last:border-b-0',
-        className
-      )}
-    >
-      <div className="min-w-0">
-        <div className="text-[12.5px]">{label}</div>
-        {hint && <div className="mt-0.5 text-[11px] leading-relaxed text-dim">{hint}</div>}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">{children}</div>
-    </div>
-  )
-}
 
 /** 设置页：所有分组共用一块仪表板，改动即存（右上角有「已保存」闪现） */
 export function SettingsView(): JSX.Element {
@@ -74,13 +47,15 @@ export function SettingsView(): JSX.Element {
 
   const addWhitelist = useCallback(async (): Promise<void> => {
     const picked = await window.opsCabin.pickDirectory()
-    if (!picked) return
-    if (settings?.whitelist.includes(picked)) {
-      toast('该目录已在白名单里')
+    if (picked.length === 0) return
+    const current = settings?.whitelist ?? []
+    const fresh = picked.filter((dir) => !current.includes(dir))
+    if (fresh.length === 0) {
+      toast('所选目录已在白名单里')
       return
     }
-    await patch({ whitelist: [...(settings?.whitelist ?? []), picked] })
-    toast.success('已加入白名单')
+    await patch({ whitelist: [...current, ...fresh] })
+    toast.success(fresh.length > 1 ? `已加入白名单（${fresh.length} 个目录）` : '已加入白名单')
   }, [settings, patch])
 
   const removeWhitelist = useCallback(
@@ -122,28 +97,22 @@ export function SettingsView(): JSX.Element {
           pad="none"
           bodyClassName="pt-1"
         >
-          <Row label="主题">
+          <SettingRow label="主题">
             <ThemePicker
               value={settings.theme}
               onChange={(theme: ThemeMode) => void patch({ theme })}
             />
-          </Row>
+          </SettingRow>
         </Bay>
 
         <Bay
           eyebrow="NOTIFY"
           title="通知"
-          hint="关注的端口状态变化（被占用 / 释放 / 换主）时推系统通知。"
+          hint="四类信号各自开关；安静时段内不推 —— 信号本身照常产生，在页面里看得到。"
           pad="none"
           bodyClassName="pt-1"
         >
-          <Row label="端口变化通知">
-            <Switch
-              checked={settings.notifyOnPortChange}
-              onCheckedChange={(value) => void patch({ notifyOnPortChange: value })}
-              data-testid="notify-switch"
-            />
-          </Row>
+          <NotifySection settings={settings} onPatch={(next) => void patch(next)} />
         </Bay>
 
         <Bay
@@ -181,10 +150,10 @@ export function SettingsView(): JSX.Element {
         </Bay>
 
         <Bay eyebrow="ABOUT" title="关于" pad="none" bodyClassName="pt-1">
-          <Row label="版本">
+          <SettingRow label="版本">
             <span className="num text-[11.5px]">{info ? `v${info.version}` : '—'}</span>
-          </Row>
-          <Row label="运行时">
+          </SettingRow>
+          <SettingRow label="运行时">
             <span
               className="num max-w-[420px] truncate text-[11px] text-dim"
               title={
@@ -197,8 +166,8 @@ export function SettingsView(): JSX.Element {
                 ? `Electron ${info.electron} · Chrome ${info.chrome} · Node ${info.node}`
                 : '—'}
             </span>
-          </Row>
-          <Row label="数据目录" hint="设置、日志与扫描记录都放在这里。">
+          </SettingRow>
+          <SettingRow label="数据目录" hint="设置、日志与扫描记录都放在这里。">
             <Button
               size="sm"
               variant="outline"
@@ -207,7 +176,7 @@ export function SettingsView(): JSX.Element {
             >
               打开数据目录
             </Button>
-          </Row>
+          </SettingRow>
         </Bay>
 
         <DangerZone onResetSettings={resetSettings} />

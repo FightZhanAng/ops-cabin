@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { AutoOp, AutoResult } from '../shared/auto'
 import type {
+  CleanHistoryEntry,
   CleanMode,
   CleanOutcome,
   CleanRequestItem,
@@ -8,7 +10,10 @@ import type {
   ScanProgress,
   VolumeInfo
 } from '../shared/disk'
+import type { HostsReport } from '../shared/hosts'
+import type { HealthReport } from '../shared/health'
 import type { MetricsSample } from '../shared/metrics'
+import type { NetCheckReport } from '../shared/net'
 import type {
   KillResult,
   PortChange,
@@ -16,7 +21,12 @@ import type {
   WatchInput,
   WatchItem
 } from '../shared/ports'
-import type { AppInfo, Settings } from '../shared/types'
+import type { ProcEntry } from '../shared/processes'
+import type { ServiceCandidate, ServiceStatus, ServiceWatchItem } from '../shared/services'
+import type { StartupReport } from '../shared/startup'
+import type { TaskReport } from '../shared/tasks'
+import type { TrendPoint } from '../shared/trend'
+import type { AppInfo, Settings, WindowState } from '../shared/types'
 import type { UpdateState } from '../shared/update'
 
 /*
@@ -33,9 +43,9 @@ const api = {
   /** 在资源管理器里定位到该路径 */
   showInFolder: (path: string): Promise<void> =>
     ipcRenderer.invoke('app:show-in-folder', path) as Promise<void>,
-  /** 弹系统目录选择器，取消返回 null */
-  pickDirectory: (): Promise<string | null> =>
-    ipcRenderer.invoke('app:pick-directory') as Promise<string | null>,
+  /** 弹系统目录选择器（可多选，最多 8 个）；取消返回空数组 */
+  pickDirectory: (): Promise<string[]> =>
+    ipcRenderer.invoke('app:pick-directory') as Promise<string[]>,
 
   /* 设置 */
   getSettings: (): Promise<Settings | null> =>
@@ -67,6 +77,9 @@ const api = {
   /** 执行清理。只允许删除最近一次扫描结果里的路径 */
   runClean: (items: CleanRequestItem[], mode: CleanMode): Promise<CleanOutcome> =>
     ipcRenderer.invoke('clean:run', items, mode) as Promise<CleanOutcome>,
+  /** 清理历史（按时间升序；总览统计图用） */
+  listCleanHistory: (): Promise<CleanHistoryEntry[]> =>
+    ipcRenderer.invoke('clean:history') as Promise<CleanHistoryEntry[]>,
 
   /* 分区 */
   listVolumes: (): Promise<VolumeInfo[]> =>
@@ -88,6 +101,69 @@ const api = {
       ipcRenderer.off('metrics:update', listener)
     }
   },
+  /** 长期趋势的采样点（时间升序，最近 7 天） */
+  listTrend: (): Promise<TrendPoint[]> =>
+    ipcRenderer.invoke('trend:list') as Promise<TrendPoint[]>,
+
+  /* 进程榜 */
+  /** 取内存/CPU 的前若干名（并集），由渲染层决定按哪一列排 */
+  listTopProcesses: (limit = 12): Promise<ProcEntry[]> =>
+    ipcRenderer.invoke('processes:top', limit) as Promise<ProcEntry[]>,
+
+  /* 联网体检 */
+  /** 跑一次联网体检（探测 DNS / GitHub 443 / SSH 22 / SSH-over-443 / API / 代理） */
+  runNetCheck: (): Promise<NetCheckReport> =>
+    ipcRenderer.invoke('netcheck:run') as Promise<NetCheckReport>,
+
+  /* hosts 文件体检（只读） */
+  /** 读一次 hosts 文件并给出判定（域名被劫到本机 / 被屏蔽 / 命中发布链路域名） */
+  readHosts: (): Promise<HostsReport> => ipcRenderer.invoke('hosts:read') as Promise<HostsReport>,
+
+  /* 开机自启清单（只读） */
+  /** 取自启清单；force=true 跳过 30 秒缓存 */
+  listStartup: (force = false): Promise<StartupReport> =>
+    ipcRenderer.invoke('startup:list', force) as Promise<StartupReport>,
+
+  /* 计划任务清单（只读） */
+  /** 取计划任务清单（已跳过系统自带任务）；force=true 跳过 60 秒缓存 */
+  listTasks: (force = false): Promise<TaskReport> =>
+    ipcRenderer.invoke('tasks:list', force) as Promise<TaskReport>,
+
+  /* 可写操作（启动项/计划任务） */
+  /**
+   * 禁用/启用（toggle）与删除登记（delete）。
+   * 只传采集报告里的 id —— 键路径与执行参数由主进程从自采集数据重建（见 autoapply.ts）。
+   */
+  applyAutoOp: (op: AutoOp): Promise<AutoResult> =>
+    ipcRenderer.invoke('auto:apply', op) as Promise<AutoResult>,
+
+  /* 系统体检（只读） */
+  /** 跑一次系统体检（开机时长 / 待重启 / 磁盘 / 设备 / 事件日志 / 意外关机）；force=true 跳过 60 秒缓存 */
+  readHealth: (force = false): Promise<HealthReport> =>
+    ipcRenderer.invoke('health:read', force) as Promise<HealthReport>,
+
+  /* 服务关注清单 */
+  /** 被关注服务的当前状态（无关注项时返回空数组，不会起 PowerShell） */
+  listServices: (): Promise<ServiceStatus[]> =>
+    ipcRenderer.invoke('services:status') as Promise<ServiceStatus[]>,
+  /** 本机全部服务（添加对话框的候选；只在打开对话框时调） */
+  listServiceCandidates: (): Promise<ServiceCandidate[]> =>
+    ipcRenderer.invoke('services:candidates') as Promise<ServiceCandidate[]>,
+  getServiceWatch: (): Promise<ServiceWatchItem[]> =>
+    ipcRenderer.invoke('services:watch:list') as Promise<ServiceWatchItem[]>,
+  addServiceWatch: (
+    name: string,
+    label: string,
+    note?: string
+  ): Promise<ServiceWatchItem[]> =>
+    ipcRenderer.invoke('services:watch:add', name, label, note) as Promise<ServiceWatchItem[]>,
+  removeServiceWatch: (name: string): Promise<ServiceWatchItem[]> =>
+    ipcRenderer.invoke('services:watch:remove', name) as Promise<ServiceWatchItem[]>,
+  updateServiceWatch: (
+    name: string,
+    patch: { label?: string; note?: string }
+  ): Promise<ServiceWatchItem[]> =>
+    ipcRenderer.invoke('services:watch:update', name, patch) as Promise<ServiceWatchItem[]>,
 
   /* 端口雷达 */
   /** 立即采集一次端口快照（失败返回 null） */
@@ -161,6 +237,25 @@ const api = {
     ipcRenderer.on('update', listener)
     return () => {
       ipcRenderer.off('update', listener)
+    }
+  },
+
+  /* 窗口控制（自绘标题栏） */
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke('win:minimize') as Promise<void>,
+  /** 切换最大化/还原；返回操作后是否处于最大化态，供按钮图标回显 */
+  toggleMaximizeWindow: (): Promise<boolean> =>
+    ipcRenderer.invoke('win:toggle-maximize') as Promise<boolean>,
+  /** 关窗 = 隐藏到托盘，与原来系统关闭按钮的行为一致 */
+  closeWindow: (): Promise<void> => ipcRenderer.invoke('win:close') as Promise<void>,
+  /** 查询当前窗口状态（标题栏按钮图标的初始态） */
+  getWindowState: (): Promise<WindowState> =>
+    ipcRenderer.invoke('win:state') as Promise<WindowState>,
+  /** 最大化/还原状态推送（主进程在 maximize/unmaximize/restore 时发） */
+  onWindowState: (handler: (state: WindowState) => void): (() => void) => {
+    const listener = (_event: unknown, state: WindowState): void => handler(state)
+    ipcRenderer.on('win:state', listener)
+    return () => {
+      ipcRenderer.off('win:state', listener)
     }
   },
 

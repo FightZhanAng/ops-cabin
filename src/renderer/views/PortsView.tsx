@@ -8,6 +8,7 @@ import { AddWatchDialog } from '@/components/ports/AddWatchDialog'
 import { ChangeTimeline } from '@/components/ports/ChangeTimeline'
 import { PortTable } from '@/components/ports/PortTable'
 import { ProcDialog } from '@/components/ports/ProcDialog'
+import { ServiceWatch } from '@/components/ports/ServiceWatch'
 import { WatchGrid } from '@/components/ports/WatchGrid'
 
 /** 端口页：关注端口读数台 + 雷达底座 + 全部监听端口表 + 变化记录右轨 */
@@ -95,6 +96,18 @@ export function PortsView(): JSX.Element {
               <div className="flex justify-center rounded-sm border border-line px-1 py-2">
                 <Scope watchlist={watchlist} entries={entries} />
               </div>
+            </Bay>
+          </Plate>
+
+          {/* 服务关注：端口回答「谁在听」，服务回答「该不该在跑」 */}
+          <Plate>
+            <Bay
+              eyebrow="SERVICE · WATCH"
+              title="服务关注"
+              pad="none"
+              data-testid="ports-services"
+            >
+              <ServiceWatch />
             </Bay>
           </Plate>
 

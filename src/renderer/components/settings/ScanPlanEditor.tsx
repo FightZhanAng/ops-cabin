@@ -1,34 +1,17 @@
-import { useState } from 'react'
 import type { JSX } from 'react'
 import { toast } from 'sonner'
 import type { ScanPlan } from '@shared/types'
 import { Rocker } from '@/components/instrument/rocker'
 import { Button } from '@/components/ui/button'
+import { TimeField } from './TimeField'
 
 interface Props {
   plan: ScanPlan
   onChange: (plan: ScanPlan) => void
 }
 
-const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/
-
-const INPUT_CLASS =
-  'num h-7 w-20 rounded-sm border border-line-2 bg-panel-2 px-2 text-[12px] text-fg outline-none transition-colors duration-150 placeholder:text-faint focus-visible:border-fg'
-
-/** 清理计划：手动 / 每天 / 每周（周一）；时刻失焦或回车时落盘，错误就近提示 */
+/** 清理计划：手动 / 每天 / 每周（周一）；时刻由 TimeField 负责校验与落盘 */
 export function ScanPlanEditor({ plan, onChange }: Props): JSX.Element {
-  const [timeDraft, setTimeDraft] = useState(plan.time)
-  const [error, setError] = useState<string | null>(null)
-
-  const commitTime = (): void => {
-    if (!TIME_PATTERN.test(timeDraft)) {
-      setError('时间格式需要 HH:mm（例如 09:30）')
-      return
-    }
-    setError(null)
-    if (timeDraft !== plan.time) onChange({ ...plan, time: timeDraft })
-  }
-
   const checkNow = async (): Promise<void> => {
     const fired = await window.opsCabin.checkScanPlanNow()
     if (fired) toast.success('已触发一次计划扫描（完成后会发通知）')
@@ -57,22 +40,14 @@ export function ScanPlanEditor({ plan, onChange }: Props): JSX.Element {
             触发时刻
           </label>
           <div className="flex min-w-0 items-start gap-2">
-            <div className="min-w-0">
-              <input
-                id="plan-time"
-                data-testid="plan-time"
-                value={timeDraft}
-                onChange={(event) => setTimeDraft(event.target.value)}
-                onBlur={commitTime}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') commitTime()
-                }}
-                placeholder="09:30"
-                aria-label="触发时刻（HH:mm）"
-                className={INPUT_CLASS}
-              />
-              {error && <div className="mt-1 text-[11px] text-danger">{error}</div>}
-            </div>
+            <TimeField
+              id="plan-time"
+              testId="plan-time"
+              value={plan.time}
+              label="触发时刻（HH:mm）"
+              placeholder="09:30"
+              onCommit={(time) => onChange({ ...plan, time })}
+            />
             <Button
               size="sm"
               variant="outline"
@@ -86,7 +61,7 @@ export function ScanPlanEditor({ plan, onChange }: Props): JSX.Element {
       )}
 
       <p className="border-t border-line px-3.5 py-2.5 text-[11px] leading-relaxed text-dim">
-        计划触发「安全清理 + 开发缓存」扫描（只扫不删），完成后发系统通知；
+        计划触发「安全清理 + 开发缓存」扫描（只扫不删），完成后发系统通知（可在通知设置里关）；
         关掉应用期间错过的计划会在启动时补扫。
       </p>
     </div>

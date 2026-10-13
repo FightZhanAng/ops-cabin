@@ -203,19 +203,43 @@
 | `ports:watch:add/remove/update` | invoke | `WatchItem[]` | M4 |
 | `ports:kill` | invoke | `{ ok, error? }` | M5 |
 | `metrics:subscribe` / `metrics:update` | invoke / 推送 | `MetricsSample` | M6 |
+| `clean:history` | invoke | `CleanHistoryEntry[]` | M10 |
+| `trend:list` | invoke | `TrendPoint[]` | M10 |
+| `processes:top` | invoke | `ProcEntry[]`（内存 Top N ∪ CPU Top N） | M10 |
+| `netcheck:run` | invoke | `NetCheckReport`（6 条探针，并行） | M10 |
+| `win:minimize` / `win:toggle-maximize` / `win:close` / `win:state` | invoke | `void` / `boolean` / `void` / `WindowState` | M11 |
+| `win:state` | 推送 | `WindowState` | M11 |
+| `hosts:read` | invoke | `HostsReport` | M12 |
+| `startup:list` | invoke | `StartupReport`（TTL 30s） | M12 |
+| `services:status` / `services:candidates` | invoke | `ServiceStatus[]` / `ServiceCandidate[]`（TTL 15s） | M12 |
+| `services:watch:list/add/remove/update` | invoke | `ServiceWatchItem[]` | M12 |
+| `ports:events` / `ports:events:clear` | invoke | `PortChange[]` / `void` | M12 |
+| `startup:list`（Tab 宿主页复用） | invoke | `StartupReport` | M13 |
+| `tasks:list` | invoke | `TaskReport`（TTL 60s） | M13 |
+| `health:read` | invoke | `HealthReport`（TTL 60s，四段并发采集） | M13 |
+| `update:*`（get / check / download / install / open-page / 推送） | invoke / 推送 | `UpdateState` | M9 |
 
-约定：所有主进程入参过白名单校验（参考 `openExternal` 的模式）；推送通道名不带冒号后缀歧义；渲染层只经 preload 显式方法。
+约定：所有主进程入参过白名单校验（参考 `openExternal` 的模式）；推送通道名不带冒号后缀歧义；渲染层只经 preload 显式方法（**刻意不暴露通用 `invoke`**）。
+
+**M14 没有新增通道**：通知出口（`Notifier`）与四类信号的判定全在主进程内部，渲染层只是
+`settings:update` 的既有消费者；通知留档（`notify-log.json`）是自检产物，不是 IPC 接口。
 
 ---
 
 ## 11. 数据模型（落 `userData/`）
 
-- `settings.json`：`{ theme, windowBounds, notifyOnPortChange, scanPlan: { mode, time }, whitelist: string[] }`
+- `settings.json`：`{ theme, windowBounds, sidebarCollapsed, notifyOnPortChange, notifyOnScanDone, notifyOnServiceDown, notifyOnUpdate, notifySustained, quietHours: { enabled, start, end }, autoCheckUpdate, scanPlan: { mode, time }, whitelist: string[] }`
 - `watchlist.json`：`{ port: number, label: string, note?: string, addedAt: number }[]`
+- `service-watch.json`：`{ name: string, label: string, note?: string, addedAt: number }[]`（M12）
 - `clean-history.json`：`{ at, freedBytes, itemCount, restored: boolean }[]`（限量 200 条）
 - `port-events.json`：`{ at, port, type: 'occupy' | 'release' | 'change', process?: string }[]`（限量 1000 条）
+- `trend.json`：`{ at, cpuPercent, memUsed, memTotal, rxBps, txBps }[]`（每 5 分钟一个点，保留 7 天 / 上限 3000 点）
 
 全部原子写（tmp + fsync + rename）；损坏时回退默认值并保留坏文件副本（`*.bad`）。
+
+**刻意不落盘的**：启动项、计划任务、体检三份报告都只在内存里带 TTL 缓存（30s / 60s / 60s）——
+它们描述的是「这台机器此刻的状态」，落盘只会让下次启动读到一个过期的世界，而采集成本
+（1.3s / 1.5s / 3.8s）还没高到需要为它做持久缓存。
 
 ---
 
@@ -236,7 +260,13 @@
 ## 13. 里程碑路线图状态
 
 - **M0–M8 全部完成 ✓（2026-10-10）** —— 「运维舱」具备：系统资源总览、磁盘分级扫描与安全清理（回收站可恢复）、端口雷达（关注清单 + 变化通知）、设置与清理计划、打包发版与自动更新
-- 后续候选（非本期）：重复文件检测、清理历史统计、端口历史时间线、启动项管理、大目录迁移、磁盘 IO / 网络速率、托盘菜单快捷扫描、README / 使用文档
+- **M9 已完成 ✓（2026-10-10）** —— 界面重设计（仪器面板 v2）、自绘标题栏与关于弹窗
+- **M10 / M11 已完成 ✓（2026-10-12）** —— 总览补齐运维视角（清理记录统计、网络吞吐、长期趋势、进程榜、联网体检）、自绘外壳、侧栏主题三档
+- **M12 已完成 ✓（2026-10-12）** —— 侧栏常驻状态（`NavBadge`）+ 三项清单式体检（hosts 域名改写、启动项、服务关注）
+- **M13 已完成 ✓（2026-10-12）** —— 计划任务清单（启动项页第二档）+ 系统体检页（开机时长 / 待重启 / 磁盘 / 设备 / 事件日志 / 意外关机）
+- **M14 已完成 ✓（2026-10-12）** —— 通知扩展：统一通知出口（四类信号各自开关）+ 服务后台盯梢 + 持续异常重复提醒 + 安静时段 + 更新可用落点
+- 下一批候选：磁盘 I/O、SMART 磨损度与温度（需另走厂商接口）、系统事件台账、重复文件检测、大目录迁移、托盘菜单快捷扫描；
+  以及**押后项**：README 换图（三张 `docs/screenshot-*.png` 全部过期，最早那张是自绘标题栏**之前**拍的）
 
 ---
 
@@ -448,3 +478,496 @@ lucide 为 ISC、class-variance-authority 与 TypeScript 为 Apache-2.0（构建
 
 **发布**：`v0.2.1`（run 38044051256，2m0s 全绿）→ Release 四类资产齐备；仓库设 7 个 topics
 （windows / electron / react / desktop-app / disk-cleaner / port-monitor / developer-tools）。
+
+---
+
+## 19. M10 / M11：总览补齐运维视角 + 自绘外壳（2026-10-12）
+
+**本轮定位**：M9 把界面语言立住了（仪器面板 v2），但总览只有「当前一瞬」的四条读数 + 两个列表。
+M10 把总览从「快照」补成「有时间轴、有横向对照、有连通性结论」的运维视角；
+M11 把「系统标题栏 + 侧栏底部版本号」这套默认外壳换成自绘。
+
+### 19.1 M10 五项
+
+**① 清理记录统计**（`overview-clean-stats`）
+只读消费既有的 `clean-history.json`，不改写数据链路。柱（每次释放量）+ 折线（累计）+ 读数三件套；
+时间窗与「最近 N 次」由 `Rocker` 拨档。
+
+**② 网络吞吐**（`src/main/net.ts`）
+数据源是 `netstat -e`，2s 采样、差分算速率、负增量归零（网卡计数器回绕或重置时）、读不到时沿用旧读数
+（不把「命令失败」渲染成「网速 0」）。
+**本地化陷阱**：`netstat -e` 的行标签随系统语言变（中文是「字节 / 接收的 / 发送的」，英文是
+`Bytes / Unicast packets / ...`），只有数字稳定。`parseNetstatBytes()` 因此**按位置取第一行「含 ≥2 个纯数字」
+的数据行**，不做标签匹配 —— 标签匹配在任何一次系统语言变化后都会静默失效。
+界面：`MetricsPanel` 加「网络」读数行，**不给 SegBar**（吞吐没有分母，画成百分比条是假信息），
+走势线按窗口峰值自定标。
+
+**③ 长期趋势落盘**（`src/main/trend.ts` + `overview-trend`）
+`TrendStore` 每 5 分钟落一点、保留 7 天、上限 3000 点；`writeFileAtomic`（tmp + fsync + rename）落
+`trend.json`；`readTrend()` 读时过滤越界点 + 排序（磁盘上可能有手改或旧版本残留）。
+采样间隔可用 `OPS_CABIN_TREND_SAMPLE_MS` 注入，`tick()` 对外暴露供自检手动推点 —— 否则「5 分钟一点」
+这个节奏在测试里无法验证。
+**画图两条硬约束**：`preserveAspectRatio="none"` 会把 SVG 内的文字一起横向拉伸，所以**刻度必须画在 SVG 外面**；
+CPU 与内存**共用一根 0–100% 轴**（双轴会把两条不同量纲的线缩放成差不多高，视觉上暗示它们可比）。
+
+**④ 进程榜**（`src/main/processes.ts` + `overview-processes`）
+把原在 `ports/collect.ts` 里的进程表抽成共享模块（端口页与总览复用同一份缓存，避免两处各拉一次 PowerShell）。
+CPU 口径：`Win32_Process` 自带 `KernelModeTime` / `UserModeTime`（累计 100ns），两次采样差分 ÷ 墙钟 ÷ 逻辑核数
+= 占总 CPU%（与任务管理器同口径）。
+**不选 `Win32_PerfFormattedData_PerfProc_Process`**：它要额外等一个完整性能计数器周期（实测 +2.5s）才出数，
+对 20s 刷新一次的榜单代价过高。
+排序取「内存 Top N ∪ CPU Top N」并集 —— 只按单列取会让另一列的高占用进程完全消失。
+界面用 `Rocker` 切档（内存 / CPU）；相对量级用中性 `SegBar tone="ink"`（不用信号色，这里没有「好/坏」）。
+
+**⑤ 联网体检**（`src/main/netcheck.ts` + `overview-netcheck`）
+6 条并行探针：DNS 解析 / GitHub 443 / GitHub 22 / `ssh.github.com:443` / API 可达 / 代理环境。
+三个判据上的讲究：
+- **证书失败 ≠ 通道不通**：本地代理做 TLS 拦截时严格校验必然失败，但通道是可用的。`probeApi()` 在证书
+  错误时用 `rejectUnauthorized: false` **重试一次**，成功则返回 `untrusted: true` → `state: 'info'`（不是 `fail`），
+  文案「证书不受信任但通道可用（本地代理 TLS 拦截）」。
+- **`isCertError()` 要同时看 message 与 `error.code` 并归一化连字符**：Node 给的是
+  `self-signed certificate`（连字符）+ `DEPTH_ZERO_SELF_SIGNED_CERT`，只按空格写法匹配会漏（本轮踩过）。
+- **`describeNetworkError()`** 把 Node 原始报文（`ECONNREFUSED` / `ETIMEDOUT` / `EAI_AGAIN`）转成人话；
+  回环地址额外加注「指向本机 · hosts 改写或本地代理」。
+
+**本机实测结论**（已固化进文档）：`github.com` 被解析到 `127.0.0.1`（hosts 改写或本地代理），
+443 有本地监听、22 是 `ECONNREFUSED`；`api.github.com` 间歇性证书不受信任 —— 与 §17「本机推送通道」的
+备忘一致。
+
+### 19.2 M11 三项
+
+- **自绘标题栏**：`frame: false` + `-webkit-app-region: drag / no-drag`；`win:minimize` /
+  `win:toggle-maximize` / `win:close` 三个 IPC，外加 `win:state` 主动推送
+  （`maximize` / `unmaximize` / `restore` 事件），否则最大化按钮图标不会跟着窗口状态翻。
+- **关于弹窗**：版本号从标题栏文字改为**点击弹窗**，弹出层内含版本号 + GitHub 项目页快捷入口。
+- **侧栏**：菜单补图标、支持收起（收起后只留图标）；底部**去掉 Electron 版本号**，换成主题三档切换。
+
+### 19.3 e2e 契约扩展（64 项全绿）
+
+`src/main/smoke.ts` 的 `view-overview` 段新增 `netText` / `trendPlate` / `trendPoints` / `trendRange` /
+`trendCpuPeak` / `trendCpuLine` / `trendMemLine` / `processPlate` / `netcheckPlate`；
+新增三段驱动：`view-processes`（切档前后行序）、`view-trend`（24h vs 7d）、`view-netcheck`（真实探测）。
+截图新增 `screen-overview-trend` / `screen-overview-netcheck`（深浅各一）。
+
+新增 5 条断言：清理统计形状与排序、网络读数单位、趋势出线、7 天窗差值 = 7、进程榜切档降序且 ≤100%、
+体检结果形状。趋势种子用 12 点带起伏 + 7 个窗外点，`data-cpu-peak` 断言用 `>=`（应用启动会自补一点）。
+
+### 19.4 测试基建两处改进
+
+1. **冒烟断言改 ASCII 标记 + 结果落盘**：`check()` 的 `✓/✗` 改 `[ok]/[FAIL]`，逐项结果写
+   `ops-cabin-e2e-result.json`。原因：PowerShell `Out-File` 把 node 的 UTF-8 输出按 GBK 解码再编码，
+   `✓/✗` 全变成 `鉁?`，**失败项无法定位**。同时驱动命令前设 `[Console]::OutputEncoding = UTF8`。
+2. **总览等待改「一次等齐三件事」**：原来分三次轮询（清理统计 / 网络 / 进程），串行等待把每轮冒烟的
+   固定开销拉长；改为单次轮询同时等 `data-runs` + 网络读数含 `/s` + 进程行 > 0（最多 60×250ms）。
+
+### 19.5 本轮踩到的两个真 bug
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| 进程榜 CPU 列**整列 null** | `top()` 建基线后快照只隔 1.2s，被 TTL(10s) 判为「新鲜」，第二次采样根本没发生 —— 缓存新鲜 ≠ CPU 可用 | `Snapshot` 加 `hasCpu` 字段，刷新判定改为 `!hasCpu \|\| 超过 TTL`；`BASELINE_WAIT` 1200 → 300（真正决定差分窗口的是两次 PowerShell 采集之间的间隔，不是这个等待） |
+| 体检把「证书不受信任」误报成「不通」，且文案被截断（`certificate signatu...`） | 未区分「严格校验失败」与「通道不可用」 | 见 19.1 ⑤ 的重试策略 |
+
+另有 `isCertError()` 漏匹配连字符、趋势图纵轴 `0%` 与横轴标签撞行（纵轴列改为只与 SVG 同一行，
+横轴与图例用 `ml-11` 与图左边缘对齐 —— 靠布局对齐，不用 `padding` 硬凑）两处修正。
+
+**验证**：`pnpm typecheck` 通过；两轮 e2e（浅色 / 深色）**64/64 全绿**；
+四份一次性隔离单测全过 —— netstat 解析 5 项 / 进程榜 7 项 / 体检探针 6 项 / 证书分支 6 项。
+证书分支曾因本机 badssl 被 `ECONNRESET` 拦掉而无法复现，改用 `openssl` 自签证书 + 本地
+`https.createServer` 做到确定性复现（严格请求报 `self-signed certificate`、放宽后 HTTP 200）。
+
+## 20. M12：侧栏常驻状态 + 三项清单式体检（2026-10-12）
+
+**本轮定位**：M10 把总览补成了「打开能看全」，但**只要不打开那个页面就一无所知** ——
+侧栏补的就是这个缺口。另加三项「该不该在跑 / 有没有被改写」的清单：它们都是**只读**的，
+共同点是「事实早就摆在本机某个文件里，只是没人会主动去看」。
+
+### 20.1 四项
+
+**① 侧栏常驻状态**（`components/layout/useSidebarStatus.ts` + `nav-badge-*` / `nav-dot-*`）
+导航项上直接挂读数：磁盘余量、服务异常数、自启残留数、窗口内的端口变化数。收起态退化成灯点，
+读数折进 `aria-label` + `title`。规则见 `design-system/opscabin/MASTER.md` 的「侧栏常驻状态」。
+**硬约束：不许为徽标新增任何轮询** —— 端口那部分只监听 `ports:snapshot` / `ports:changes`，
+刻意不调 `subscribePorts()`（那会把 netstat 提到 2 秒常驻，为了几个徽标让一个采集永远跑着，这是最容易走歪的地方）。
+
+**② hosts 文件体检**（`src/main/hosts.ts` + `overview-hosts`，整行 Plate）
+§19 的联网体检已经能说出「`github.com` 解析到 `127.0.0.1`」，却**看不到是谁改的**；这一格补上后半句。
+- 编码按 BOM 判（无 BOM UTF-8 / 带 BOM UTF-8 / UTF-16LE —— PowerShell `Out-File` 默认写过第三种），不猜。
+- **只报三件确定的事**：指向回环 / 指向黑洞（`0.0.0.0`）/ 命中发布链路域名。局域网映射一律不报 ——
+  报得越宽，真正要看的那几条越容易被淹掉。
+- **排序「发布链路优先」**：本机 hosts 有 60 条异常、面板只列 40 条，不排序那条 `github.com` 会被埋掉。
+  判定顺序 = `watched` → `kind` → 行号，两处采样（总览格与独立段）读数一致。
+
+**③ 服务关注清单**（`src/main/services/{collect,store}.ts` + `ports-services`）
+端口回答「谁在听」，服务回答「该不该在跑」。六档状态而不是「跑 / 没跑」，两档最容易被误报：
+`Disabled` 停着是**正常**（并进「停了」会让每个被禁用的驱动服务天天亮灯）、`missing` 要提醒的是
+**「该清关注了」而不是「服务挂了」**（查不到也必须返回条目，静默丢弃会让用户以为自己从没关注过它）。
+`pending` 是过渡态，走中性灯、不计入「不在跑」。
+候选是 300+ 个服务，所以添加走**搜索式对话框**（滚动列表不现实），最多列 60 条并写明截断。
+
+**④ 启动项清单**（`src/main/startup.ts` + 独立页 `startup`）
+五个来源一次读全（`HKCU\...\Run` / `HKLM\...\Run` / `HKLM\Wow6432Node\...\Run` + 两个启动文件夹）。
+两处判定是这一页的全部价值：
+- **读 `StartupApproved` 的启用位**（值首字节 `0x03` = 禁用，`0x02/0x06` = 启用）。不读它就会把已经
+  禁掉的自启项继续当成「每次开机都在跑」，用户会去清一个根本没在跑的东西。
+- **`invalid` 只算「启用中」且路径不存在的项**，行状态必须与它同义。
+- 裸命令名（无盘符 / 无分隔符）按**有效**处理（走 PATH 解析），判成失效是假警报。
+
+### 20.2 采集层的结构性改动：TTL 缓存 + 并发合流
+
+自启项要起 PowerShell（实测 1.3s），而侧栏与页面会**几乎同时挂载**。加了带 TTL 的缓存之后
+又出现新问题：两个请求同时发现缓存为空，于是各起一次 PowerShell —— 缓存在这种情况下等于没做。
+所以每个采集器都是「TTL 缓存 + inflight 合流」：
+
+```ts
+function startupReport(force = false): Promise<StartupReport> {
+  if (!force && startupCache && Date.now() - startupCache.at < STARTUP_TTL) {
+    return Promise.resolve(startupCache.report)   // 命中缓存
+  }
+  if (startupInflight) return startupInflight     // 有人正在采，搭他的车
+  startupInflight = collectStartup()...
+}
+```
+
+`STARTUP_TTL` 30s / `SERVICES_TTL` 15s；服务关注清单为空时**直接返回空数组，不起 PowerShell**。
+三个写操作（加 / 删 / 改关注）后把服务缓存置空。
+
+### 20.3 本轮踩到的真 bug
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| **「列出全部服务」一个都拿不到**（304 → 0） | 空 filter 分支被写成 `$items = @()`，等于把整条路径静默做废 —— 给 `-Filter` 传空串会报错，于是「干脆返回空数组」，但那是**全量查询**那条路 | 空 filter 走**不带 `-Filter`** 的全量查询；一次性单测复跑得到 304 个 |
+| **启动项：灯比数字多** | 统计块的「路径失效」只算启用中的项，而行的灯按「路径没了就亮」判 —— 一条「已禁用且路径也没了」的项会让灯亮成「路径失效」，点「仅失效」看到的行数与上面的读数对不上 | 加第四档 `stale`（`idle` 灯 / 「已禁用 · 残留」），两个事实都留住；`data-disabled` 改为直接按 `item.disabled` 数 |
+| **服务：侧栏说 1、面板说 2** | 「不在跑」有三处口径：面板把 `pending` 算进去、侧栏不算 | 统一成 `down ∪ missing`；`pending` 改中性灯 + 「切换中」，不计入任何计数 |
+| **e2e 94 项全红且毫无线索** | 宿主环境带着 `ELECTRON_RUN_AS_NODE`，`electron.exe` 因此**退化成纯 Node**（没有 `app`），主进程加载到 electron-updater 就炸；而 harness 用 `stdio: 'ignore'` 把崩溃栈丢了 | 脚本里 `delete env.ELECTRON_RUN_AS_NODE`（环境的事不该要求每次调用都记得清）；子进程输出落日志，一个冒烟文件都没产出时打印日志尾巴 |
+
+顺带修掉一处**潜伏的假通过**：启动项页的就绪轮询写成
+`!document.querySelector('[data-testid="startup-refresh"]')?.textContent.includes('读取中')`，
+元素还没挂载时可选链给出 `undefined`，取反就是「已就绪」—— 会在视图挂载前退出，把「还没渲染」当成「读完了」。
+改成显式判元素存在。
+
+### 20.4 e2e 契约扩展
+
+`view-overview` 新增 `hostsPlate` / `hostsFlags` / `hostsWatched` / `hostsReadable` / `navCount` /
+`navLabels` / `navBadges`（带 `data-testid` 与 `data-tone`）；`sidebar` 段新增收起态
+`collapsed: { badges, dots, labels }`；`view-ports` 新增 `servicesPlate` / `servicePanel` /
+`serviceCount` / `serviceDown` / `serviceRows` / `serviceStates` / `serviceNames`。
+新增三段驱动与截图：`view-hosts`（+`screen-overview-hosts`）、启动项页（+`screen-startup`）。
+
+新增 13 条断言，核心是**关系**而不是机器相关的数字：hosts 行数 === `data-flags`（截断在后端做、DOM 不丢行）、
+`data-watched` 的行构成**前缀**、两处采样读数一致；导航 5 项且原四项仍在、徽标 tone 属四档且读数非空、
+端口徽标 === 面板的 `data-down`、收起态徽标归零且灯点补位、`aria-label` 读得出读数；
+服务三行 `running,running,missing` 与 `data-down` 一致；启动项 `data-invalid` === 行内 `invalid` 的条数、
+`data-disabled` === `disabled + stale`、「仅失效」档行数 === 统计块的失效数、分组是固定顺序的子序列。
+
+**种子环境新增 `service-watch.json`**：`Winmgmt` / `EventLog`（受保护服务，必然在跑 —— WMI 提供程序
+自己就在响应这次查询，是自证式确定）+ 一个**故意不存在的服务名**（确定性覆盖 `missing` 那一档，
+真实环境里要靠卸载软件才能碰到）。不种「已禁用」的服务：哪台机器上有、什么状态全看运气，
+种进去只会得到随机器飘的断言。
+
+### 20.5 测试基建改进
+
+- **子进程输出不再丢弃**（见 20.3 第 4 行）：`ops-cabin-smoke-<theme>.log`，无产出时自动打印尾巴。
+- **e2e 启动前删 `ELECTRON_RUN_AS_NODE`**：这个变量是宿主环境的事，不该由调用方每次记得清。
+- 采集器另有一份一次性隔离单测（`--experimental-strip-types` + 自制 loader 补 `.ts` 扩展名）：
+  启动项 5 项 / hosts 5 项 / 服务 5 项，全过。
+
+**本机实测结论**（已固化进文档）：启动项 14 条 / 残留 0 条（来源分布 4+6+1+2+1），耗时 1305ms；
+hosts 212 行 / 生效 63 条 / 异常 60 条（列 40 条、省略 20 条），其中 **11 个域名被指到 `127.0.0.1`**；
+服务候选 304 个（2160ms），按名采集 3 个（1659ms）。
+
+## 21. M13：计划任务清单 + 系统体检（2026-10-12）
+
+**本轮定位**：M12 之后剩下的三件事里，这两件都是「**别处的真相，汇总到一处**」：
+
+- **计划任务**补的是启动项页的缺口 —— Run 键只管开机那一瞬，真正在后台**按时**联网的大头
+  （遥测上报、自动更新、定时检查）全在任务计划程序里，而那里没有人会主动去看。
+- **系统体检**补的是「整体还好吗」这个问题的缺口 —— 故障盘、待重启、报错设备、事件日志、
+  上次是不是没好好关机，原本要分别去「优化驱动器」「Windows 更新」「设备管理器」
+  「事件查看器」各看一处。
+
+第三项（通知扩展）留到下一批。
+
+### 21.1 计划任务：加在启动项页做 Tab，不新开页
+
+两者同族（都在回答「谁在开机 / 按时自己跑」），而侧栏项数是 e2e 的精确契约、每加一项都要
+付契约成本。**决定性理由是数据本身**：Run 键与计划任务是同一个问题的两面，分开两页反而
+让人要来回翻。于是「启动项」页成为页级 Tab 宿主（`data-tab`），两档**按需挂载** ——
+计划任务那份要起一次 COM 枚举（本机 1.5 秒），没切过去就不采。
+
+### 21.2 本轮最重的三条判定
+
+**① `LastTaskResult` 不能按 `!= 0` 判失败。**
+调度器把自己的状态也记在这同一个字段上：`0x41300` 就绪 / `0x41301` 正在运行 /
+`0x41302` 已禁用 / `0x41303` 尚未运行 / `0x41304` 没有更多运行。**本机 17 个任务里有 6 个是
+这两个值** —— 判错就让假警报占多数。入参一律 `>>> 0` 归一化。
+
+**② `0x8007xxxx` 的低 16 位才是 Win32 错码，掩码必须 `>>> 0`。**
+JS 的 `&` 走有符号 32 位：`0x80070002 & 0xffff0000` 得到 `-2147024896`，与字面量
+`0x80070000`（`2147942400`）永不相等 —— 少了 `>>> 0`，整张 Win32 文案表就是**死代码**。
+这个 bug 真的写进去了，靠自检的「结果码解码」那一组抓出来。
+
+**③ 待处理文件队列不是「要求重启」（体检页最要紧的一条）。**
+`PendingFileRenameOperations` 常被当成重启标记。实测本机 24 个槽位（12 条操作，
+配对里的空串是「目标为空」即删除）里实打实只有 8 个文件，而 `.atrust.running` 被登记了
+**3 次**、`force_show` **3 次** —— **同一个操作重复登记，说明写队列的人根本没把它当重启要求**，
+只是用 `MoveFileEx(MOVEFILE_DELAY_UNTIL_REBOOT)` 排了个「下次开机顺手删」。
+按「有 N 条待替换文件 ⇒ 要求重启」报警，等于叫用户白重启一次。
+→ 只有 CBS 与 Windows 更新两处注册表键算 `required`，这一项**永远**是 `advisory`。
+
+### 21.3 性能：串行 11.1 秒 → 并发 3.8 秒
+
+体检页全量串行量到 **11.1 秒**（命令行进程冷启动 5×0.65s + 设备枚举 3.7s + 磁盘 1.07s +
+开机时刻 1.28s，各算各的）。四段之间没有任何依赖，`Promise.allSettled` 并发之后墙钟取决于
+最慢的那一段。每一段的取数路径都是量过的：
+
+| 段 | 取的 | 弃的 | 差 |
+|----|------|------|----|
+| 磁盘 | `MSFT_PhysicalDisk`（CIM 直查） | `Get-PhysicalDisk` 4.73s | **4.4 倍** |
+| 设备 | `Win32_PnPEntity -Filter "ConfigManagerErrorCode <> 0"` | `Get-PnpDevice -PresentOnly` 5301ms | **2.5 倍** |
+| 计划任务 | COM `Schedule.Service` | `Get-ScheduledTask` 3.7s | **2.4 倍** |
+
+### 21.4 本轮踩到的真 bug
+
+| 现象 | 根因 | 修复 |
+|------|------|------|
+| **`0x8007xxxx` 的 Win32 文案从未生效** | 掩码结果是有符号数，与无符号字面量永不相等（见 21.2 ②） | 补 `>>> 0`，并加 `win32 !== 0` 防止印出「Win32 错误 0」 |
+| **任务「路径失效」100% 误报** | 有的安装程序把引号写进了任务 XML 的 `<Command>`（本机 WPS、Snipaste），`existsSync('"D:\...exe"')` 必假 | 抽出共用模块 `execpath.ts` 走 `parseExecPath`；`%SystemRoot%` 类变量先展开 |
+| **计划任务采集 3.7 秒**（探针预估 0.45s） | `Get-ScheduledTask` 逐任务走一次 WMI 往返（180 个任务 = 180 次） | 换 COM 枚举 → 1.5s；映射表先在本机 180 个任务上与 cmdlet 类名**逐条对齐**才敢用 |
+| **「每个任务都必须有触发器」是错误断言** | 本机 Snipaste 是手动任务，本来就没有触发器 | 改断言为「无触发器的任务按『手动』呈现而不是崩掉」 |
+| **已禁用任务仍显示「下次 10-12 20:00」** | 禁用的任务可能留着一个陈旧的 `NextRunTime`，但不会在那个点跑 | `showNext = state !== 'disabled' && nextRunAt !== null`；登录/开机触发的任务同样省略（「下次 —」读起来像出错），加两条 e2e 契约防回归 |
+| **体检的 53264 会被显示成「原始值 53264」** | `Storage.types.ps1xml` 里有 **18 个类**各带一份 `OperationalStatus` 且**内容互不相同**；差点抓错属主 | 逐类定位后只认 `MSFT_PhysicalDisk` 那一段（第 689 行）；自检钉了一条断言把它钉住 |
+| **枚举提取器静默返回 0 项** | 双引号正则里 `$_status` 被当变量展开成空串，正则失配 | 正则改用**单引号**字符串；这条教训写进了 `shared/health.ts` 与 `pages/health.md` |
+| **`Get-PnpDevice` 报出 271 个「问题设备」** | 它枚举整个驱动仓库；不带 `-PresentOnly` 时本机 443 台里 270 台是 `CM_PROB_PHANTOM` 幽灵设备 | 改用 `Win32_PnPEntity`（只枚举在位设备：173 台 = `Get-PnpDevice -PresentOnly` 的 173） |
+| **探针被 CLIXML 进度流打挂** | 首次使用模块时 shell 会往 stderr 写「正在准备首次使用模块。」的进度记录 | 四段脚本统一设 `$ProgressPreference = "SilentlyContinue"` |
+| **体检页双列布局永远不生效** | 写的是 `xl:grid-cols-2`（1280px），而默认窗口宽 1180px | 门槛改 `lg`（1024px） |
+| **导航项数断言挂了 2 项** | 断言写死 5 项，本轮加了「体检」变 6 项 —— **断言需要跟着改，不是代码 bug** | 改成 6 项并同时钉住「原五项仍在」（`5+1-1` 还是 5，只判计数抓不到挤掉一项的情况） |
+
+### 21.5 界面上的两条诚实性修正
+
+- **「已禁用」不算故障**（服务 → 自启项 → 计划任务 → 设备，第五次）。设备侧三条独立证据：
+  ① 本机那块 Sangfor aTrust VNIC 的 Problem 就是 22；② 系统自带的
+  `pnputil /enum-devices /problem` 报「**No devices were found on the system.**」——
+  Windows 自己也不把被禁用的设备算作问题设备；③ `PnpDevice.Types.ps1xml` 的 CM_PROB 全表里
+  `DISABLED`(22) 之外还有 `HARDWARE_DISABLED`(29) 与 `DISABLED_SERVICE`(32) ——
+  那两个是「BIOS 里关了」「驱动服务被禁了」，属真问题，**不能一起并进这一档**。
+  所以只认 22，多一个都不认。
+- **拿不到就说拿不到**。SMART 磨损度与温度在本机读不出来
+  （`Get-StorageReliabilityCounter` 报「无法使用指定的命名参数解析参数集」、
+  `MSStorageDriver_FailurePredictStatus` 报「不支持」），所以只给粗粒度健康档并在界面上写出来。
+  磁盘健康**只有 `HealthStatus === 0` 才算通过** —— `null`（读不到）与 `5`（未知）都不算，
+  且界面上「读不到」与「未知」分开写。
+
+### 21.6 自检与 e2e 扩展
+
+**采集器真机自检**（`.workbuddy/tools/collectors-check.mjs`）新增三组：
+体检 21 项 + 磁盘枚举映射 16 项 + 设备分档 5 项。其中两条是**关键回归**：
+`diskOperationalText([53264]) === '原始值 53264'`（这个码属于 `MSFT_Disk`，不属于
+`MSFT_PhysicalDisk`）、非法枚举显示原始数字而不猜名字。
+
+**e2e** 新增 `view-health` 驱动段与 **11 条断言**，全部断言**关系**而不是机器相关的数字；
+外加两张截图。新加的一条基建规则：**首屏之下的内容必须单独截一次**
+（`scrollTo(0, 99999)` + `screen-health-logs`）—— 断言全绿和「这一页好不好看」是两件事。
+
+`view-tasks` 段的 11 条断言（上一节已加）本轮一并跑通。
+
+**验证**：`pnpm typecheck` 通过；`pnpm build` 通过；两轮 e2e（浅色 / 深色）**129/129 全绿**；
+采集器真机自检全绿；截图自审通过（`screen-health` / `screen-health-logs` 深浅各一张）。
+
+### 21.7 本机实测结论（已固化进代码注释与断言）
+
+- **计划任务**：180 总数 / 163 跳过（`\Microsoft\*`）/ **17 列出** / 1 需留意 / 7 已禁用 /
+  10 启用 / **1527ms**。真凶是 NVIDIA 遥测 ×5、Edge 更新 ×5、WPS 定时联网 ×3（全已禁用）、
+  Snipaste 手动任务上次被强制结束（`0x40010004`）。
+- **体检**：**3842ms** / 要求重启 **0** 处 / 待处理文件 8 个（12 条登记，有重复）→ `advisory` /
+  磁盘 1 块 `NVMe SAMSUNG MZVLW256`（系统盘）256GB 健康 · 固态硬盘 · NVMe · OK /
+  设备 1 台 `Sangfor aTrust VNIC / Net / 代码 22` → `disabled` /
+  System 近 7 天 16 条 5 来源（`Netwtw06` ×8 —— Intel 无线网卡驱动反复报）/
+  Application 近 7 天 189 条 5 来源（`.NET Runtime` ×182 —— Steam++ 在刷日志）/
+  意外关机 2 次（30 天）：`09-29 12:56 Kernel-Power 41` + `09-29 12:57 EventLog 6008`。
+
+---
+
+## 22. M14：通知扩展（2026-10-12）
+
+### 22.1 四项交付
+
+| # | 内容 | 说明 |
+|---|------|------|
+| 1 | **统一通知出口** `src/main/notify.ts` | 四类信号（`port` / `scan` / `service` / `update`）各一个开关；开关判定与安静时段判定都收在这一处；**每一次调用都留档**（含被拦下的） |
+| 2 | **服务后台盯梢** `src/main/services/monitor.ts` | 60 秒一拍、无关注项不跑、复用 `servicesCache`；变化检测是纯函数 `diffServices`（可脱机验证）；`add/remove` 关注时立即对齐基线 |
+| 3 | **持续异常重复提醒** | 挂起且**已通知过**、满 30 分钟仍未恢复 → 再提醒一次（`notifySustained`） |
+| 4 | **安静时段 + 更新落点** | `QuietHours { enabled, start, end }`（默认关闭、支持跨午夜）；设置页通知分组重做；「发现新版本」补上侧栏徽标 |
+
+改动前的状态是：端口变化有通知（有开关）、计划扫描完成有通知（**没开关**）、服务与更新**完全没有**；
+且两个 `new Notification(...)` 各自为政，任何「统一判定」都无处落脚。
+
+### 22.2 三条最要紧的口径
+
+1. **开关与抑制判定只在出口做。** 散在各调用点判是漏判的温床，而且被拦下的那些不留档 ——
+   「为什么没收到通知」就永远答不上来。现在每一次调用都落一条记录（`shown` / `off` / `quiet` / `failed`），
+   `quiet` 那条还写明当时的区间。
+2. **安静时段内丢弃，不延后。** 四类信号在界面里各有各的家（端口事件流水账 / 服务面板与侧栏
+   徽标 / 磁盘页扫描记录 / 更新区块与侧栏徽标），静默 ≠ 丢失；延后反而会把一小时前的消息
+   伪装成刚发生的。**做静音之前先确认这条消息在别处还有个家**，没有就别静音 —— 先补落点。
+3. **两道判定都 fail-open。** 设置还没装载好、时段格式坏掉、`start === end`（零长度）一律按
+   「不静音」处理：宁可吵，不可哑。方向搞反了会静默吃掉**所有**通知，而且没人会发现。
+
+配套的三条服务判据纪律：`serviceDown()` 只有一份（侧栏 / 服务面板 / 盯梢三处共用）；
+`stopped` 且启动类型是 `Disabled` 不算异常（本会话第五次同一条纪律）；
+**「已恢复」只在发过「挂了」之后才说** —— 启动时就是停着的服务后来自行起来了，
+那是「刚起来」而不是「恢复」，报出去只会让人去找一条并不存在的警报。
+
+### 22.3 本轮踩到的真 bug：陈旧快照把「一直占着」读成「刚被占用」
+
+自检第一版跑完，通知留档里多出一条**不是我造的变化**：
+
+```
+"1719 被占用；1720 被占用；1721 被占用"   ← 三条新关注的端口齐刷刷报占用
+```
+
+根因在 `PortsMonitor.setWatchlist()`：新关注项的基线取自「最近一次快照」，但**没有校验快照的年龄**。
+应用刚起来就关注、或自检里批量关注时，快照可能已经放了几分钟（里面还没有这些端口），
+于是「快照里找不到」被当成「它没在监听」，紧接着的第一次采样就把「其实一直占着」报成「刚被占用」。
+
+两种修法里选了语义更清楚的那个：给快照加年龄上限（10 秒，比一个采样周期长一点），
+**过旧的快照不再当基线依据**，改为 `#pendingBaseline` 标记 —— 下一拍只补基线、不报变化。
+
+```
+快照新鲜（用户从端口页点关注：页面显示的就是它）→ 立刻建基线 → 保留「不吞掉关注后几秒内的变化」
+快照过期 / 没有（应用刚起来、批量关注）      → 标 pending → 下一拍只补基线，绝不凭空报一条变化
+```
+
+这条修复不是为自检改的：同样的路径在真实使用中也会踩（打开端口页、页面首拍还没回来就点关注）。
+自检只是把它放大成了必现。e2e 里加了对应的回归断言 —— **恰好三条**，一条不多。
+
+### 22.4 自检与 e2e 扩展
+
+**通知端到端验证**（`smoke.ts` 内新增一段）走的是真实路径，不是直接调 `notify()`：
+
+```
+起三条真在监听的端口服务器 → 订阅 + 刷新快照 → 加关注（建基线）
+  → 关 A：期望 shown          （正常路径）
+  → 开安静时段（覆盖此刻）→ 关 B：期望 quiet
+  → 关端口开关 → 关 C：期望 off
+  → checkUpdate()：期望 update/shown（同一个版本号只通知一次）
+```
+
+安静区间取「此刻前后各一小时」：长度 120 分钟必然覆盖当前分钟，且当测试跑在 23 点或 0 点
+前后时 `start > end`，**顺带把跨午夜分支也走一遍**（写死 22:00–08:00 就永远只测到一种形态）。
+
+e2e 新增 7 条断言（含「恰好三条」那条假警报回归）与 `OPS_CABIN_FAKE_UPDATE` 注入
+（假版本号让更新分支不必真联网）；采集器真机自检新增 **24 项**真值表
+（安静时段 7 项含跨午夜 / 零长度 / fail-open；服务判据 5 项；盯梢判定 11 项含基线、
+恢复、重复提醒阈值、删项清状态；聚合文案 1 项）。
+
+服务「挂起」这条路径**没有端到端自检**：没有可靠的办法让一个真服务中途挂掉
+（`Winmgmt` 停不掉，能动的手动服务各台机器都不一样）。它由纯函数真值表兜住，
+这是这一批唯一一处「验证强度低于其余部分」的地方，写在这里以免下次误以为它也验过了。
+
+### 22.5 性能与本机实测
+
+- 服务盯梢：**无关注项时不跑**；有关注项时 60 秒一拍，且吃 `servicesCache`（15 秒 TTL）——
+  窗口开着时侧栏本来也在拉同一份，实际很少真的多起一次 PowerShell。
+- 通知本身零采集成本：四类信号全部搭在已有的采集/推送路径上（端口盯梢、扫描调度、
+  服务盯梢、更新检查），没有任何为通知新增的轮询。
+- 本机实测（自检留档）：三条 probe 记录 `shown / quiet / off` 各一条、**总计恰好三条**；
+  更新通知恰好 1 条；侧栏出现 `nav-badge-settings:warn=有新版本`。
+- **验证**：`pnpm typecheck` 通过；`pnpm build` 通过；两轮 e2e（浅色 / 深色）**164/164 全绿**
+  （含 8 条通知断言与新增的 `screen-settings-quiet` 状态截图）；采集器真机自检全绿（新增 24 项）。
+
+---
+
+## 23. M15：启动项可写化与磁盘扫描扩展（2026-10-13）
+
+**背景**：启动项与计划任务两页此前只读 —— 看得到「谁在开机时跑」，接不上「把它关掉」；
+大文件扫描的入口只放开单目录；清理位置清单停在 14 个老位置。本批正面解决这三件事
+（旧设计注释里「写要等先有备份与一键还原」的押后条件，由「禁用/启用天然可逆 + 删除只对
+零恢复价值的失效项开放」替代满足）。术语见 `CONTEXT.md`；不可逆取舍见
+`docs/adr/0001-写操作提权.md`；规格与任务见 `docs/specs/2026-10-13-M15-启动项可写化与磁盘扫描扩展.md`
+与 `.scratch/M15/tickets/`。实现链：grill-with-docs → to-spec → to-tickets → implement → 全量回归。
+
+### 23.1 A 线：可写化（启动项 + 计划任务）
+
+- **启动项开关（S1–S4）**：行内开关直接禁用/启用。禁用只写 `StartupApproved` 首字节
+  （0x03 禁用 / 0x02 启用），其余 11 字节（时间戳）原样保留 —— e2e 用带自定义尾字节的夹具
+  做了字节级往返断言。HKCU 项与用户启动文件夹全程无 UAC；HKLM / 公共启动文件夹走按次提权。
+- **删除登记（S5–S7）**：只有「路径失效」的条目出现删除入口（含「已禁用 · 残留」档）；
+  二次确认（不可撤销、只删登记不碰程序本体）→ 直接删除不进回收站（D7）→ 强制重读。
+  注册表来源删 Run 值并尽力清理启用位；文件夹来源删 .lnk（防御性分支，见 23.3-6）。
+- **计划任务开关（S8/S10）**：`schtasks /Change /ENABLE|/DISABLE`；**先直写、失败才提权**
+  （用户自建任务多数免 UAC，任务 ACL 不放开的才弹一次）。「已禁用」不进「需留意」的
+  既有判据不变 —— e2e 断言「已禁用读数 +1 且需留意不动」。
+- **任务删除（S9）**：只对 `missing` 档开放；`schtasks /Delete /F`；找不到=已达标（幂等成功）。
+- **两页同口径**：开关防连点、失败文案（needs-admin / stale / cancelled / denied）、
+  强制重读、删除确认框全部共用同一份实现（`failText.ts` / `DeleteConfirmDialog.tsx`）。
+
+### 23.2 按需提权与安全边界（ADR 0001）
+
+- 渲染层只传 `id`（D8）；主进程从**刚重采集的报告**重建执行参数，id 对不上直接 stale ——
+  渲染层被攻破也改不了/删不掉任何报告之外的对象。
+- 需要管理员的动作：`Start-Process -Verb RunAs` 以 `--apply-op` 再启动一个本应用实例
+  （**受控助手**）→ 助手按 `executeStartupOp / executeTaskOp` 执行、写回结果文件、退出。
+  弹窗身份是「运维舱」而不是 PowerShell；**不常驻高权限、不重启提权**。
+- 封闭操作集（D4）：启动项改/删 + 任务改/删，四类动作之外一律拒绝；助手请求文件必须位于
+  系统临时目录、文件名符合 nonce 形态、体积 ≤64KB、时间戳在 5 分钟窗内 —— 从离线探针到
+  e2e 直调都有伪造用例（非约定文件名 / tmpdir 之外 / 陈旧时间戳 / 未知域 → 全拒）。
+- 自检模式下提权短路为 `needs-admin`（自动化里没人应答 UAC，弹窗会把 e2e 挂死）；
+  真实弹窗链路进人工清单（23.6）。
+
+### 23.3 本轮踩到的真问题（全部有 e2e 或离线探针佐证）
+
+1. **`(Get-Item $key).SetValue()` 写不进去**：Get-Item 拿到的注册表句柄没有写权限
+   （报「无法写入到注册表项」，本机实测）→ 改走 `Set-ItemProperty`。001 首跑全红的根因，
+   靠离线探针（diag-enable / diag-acl）逐层定位。
+2. **schtasks 输出是 OEM 代码页**（中文机器 GBK），而 runPowerShell 会把控制台换成 UTF-8 ——
+   中文错误信息过那条通道全是乱码，「拒绝访问」与「找不到了」无法分类 → 改直接 execFile +
+   显式 GBK 解码（英文系统上 GBK 对 ASCII 无损，英文关键词照样能匹配）。
+3. **e2e-settings G 与 M14 的基线语义冲突**：`#pendingBaseline`（M14：新关注时已被占用的
+   端口不报变化）让「先起服务再关注」的旧测试等不到事件 → 测试改为「先关注 → 过一拍建基线
+   → 再起服务」。（M14 当时只跑了冒烟、没跑九套回归，所以当时没暴露。）
+4. **侧栏徽标打断旧导航点击**：e2e-disk / e2e-ports / e2e-ports-m5 用 `textContent === '磁盘'`
+   找 nav 按钮，M14 的徽标文字（「剩 12.2 GB」）让精确匹配落空 → 全部改按 `data-testid="nav-*"`。
+5. **e2e-scan A 节扫描根与新夹具互相干扰**：A 扫整个 fixtureRoot，M15-006 新增的 second 根
+   把「4 个 × 2MB」精确断言弄脏 → 收窄到本节目录；同时把取消等待从固定 1.5s / 900ms 放宽为
+   轮询（5s 上限；高负载实测 0.9–2.9s，PLAN §14 已记录过该套件的负载敏感性）。
+6. **文件夹来源的删除分支在采集口径下不可达**：.lnk 存在即「路径有效」，所以「失效 .lnk」
+   这一态不存在（ticket 里的夹具预期按现实修正并留注释）；executor 的 .lnk 删除分支保留为
+   防御性实现，由守卫（仅失效项可删）挡在前面。
+
+### 23.4 B 线：磁盘扫描扩展
+
+- **盘符快捷（S11）**：分区列表每颗盘（含映射盘——列表里有什么就开放什么）一个「扫这颗盘」
+  → 以盘根为根跑大文件扫描；e2e 点 C: 断言进入扫描态后取消（不真等整盘）。
+- **多目录（S12）**：`pickDirectory` 改 `multiSelections` 返回数组（渲染层 ≤8 截断），
+  `parseScanOptions` 侧再截 8（双保险）；多根结果合并按大小降序 —— e2e 断言
+  「两根合并口径 + 排序 + 覆盖 + 9 根只取前 8」。
+- **清理位置扩展（S13）**：新增 11 个低风险位置（14 → 25 条定义）—— Chrome / Edge 各 profile 的
+  `Cache` / `Code Cache` / `GPUCache`（**通配候选按 profile 各自成条目**，条目名带 `· <目录名>`
+  后缀）、`D3DSCache`、NVIDIA `DXCache` / `GLCache`、VS Code `Cache` / `CachedData`。
+  逐条标 `safe` 档与「自动重建 / 运行中可能锁住文件」的口径；白名单、系统保护名单、
+  回收站等既有防线不变（S14）。
+- **resolveTargets 能力扩展**：候选路径支持一段 `*`（profile 枚举 —— 需要的是 profile，
+  不是通用 glob）；无通配时保持旧语义（取第一个存在的候选；文件夹/多 profile 各自成条目）。
+- **本机实测**（2026-10-13）：safe 组解析出 8 处（含 Edge Default ×3：256M / 156M / 6.2M、
+  D3DSCache 2.8M、GLCache 670K）；devCaches 7 处（VS Code 11M / 27M、pnpm / pip / uv / Yarn /
+  Electron 等）。本机未装 Chrome、无 NVIDIA DXCache —— 如实不出现（缺失即跳过）。
+  多 profile 枚举在 e2e 里用 LOCALAPPDATA / APPDATA 覆盖到夹具验证（2 个 profile 各自成条目、
+  无重复、不碰真实用户目录）。
+
+### 23.5 验证
+
+- `pnpm typecheck` 通过；`pnpm build` 通过；
+- 十一套 e2e 全绿（每套自带构建）：e2e-check(15) / e2e-disk(41) / e2e-ports(23) /
+  e2e-ports-m5(35) / e2e-overview(19) / e2e-settings(39) / e2e-update(18) /
+  e2e-smoke(164 × 深浅两轮) / e2e-scan(35) / e2e-autostart(100) / e2e-portable(12)；
+- 冒烟截图重拍并更新 README 三张（浅色总览 / 浅色端口 / 深色总览）。
+
+### 23.6 人工待办（自动化覆盖不到）
+
+- **真实 UAC 全链**（自检下短路，e2e 只直调「提权后真正执行的那份代码」）：
+  1. HKLM Run 项开关 → 同意：状态翻转；取消：行状态不变 + 提示「已取消（未提权）」；
+  2. HKLM 失效项的**删除**经 UAC（003 的删除 + 002 的提权合流）；
+  3. 公共启动文件夹 .lnk 项开关；
+  4. 需要管理员的任务（任务 ACL 不放开的）开关 → UAC；
+  5. **打包版**验证弹窗身份显示「运维舱」（需 dist 产物）。
+- 安装包双击实测 / 真实 GitHub 发版（§15 起的历史待办仍然有效）。

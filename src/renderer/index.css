@@ -183,6 +183,16 @@
 }
 
 @layer utilities {
+  /* 自绘标题栏（主进程 frame:false）：
+     整条标题栏可拖动窗口；窗口控制按钮区必须 no-drag，否则按钮点不到。
+     双击拖拽区最大化/还原由 TitleBar 组件自己实现（frame:false 没有原生双击行为）。 */
+  .titlebar-drag {
+    -webkit-app-region: drag;
+  }
+  .titlebar-no-drag {
+    -webkit-app-region: no-drag;
+  }
+
   /* 微标签：拉丁大写 + 字距；中文落在同字号黑体上 */
   .eyebrow {
     font-family: var(--font-mono);

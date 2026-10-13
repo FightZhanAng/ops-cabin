@@ -169,6 +169,18 @@ async function evaluate(cdp, expression, awaitPromise = false, timeoutMs = 60000
   return race.result?.value
 }
 
+/** 轮询等待表达式真值（超时返回最后一次取值）——取消链路的目标可能很重，不钉死固定等待 */
+async function waitForDom(cdp, expression, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs
+  let value = null
+  while (Date.now() < deadline) {
+    value = await evaluate(cdp, expression).catch(() => null)
+    if (value) return value
+    await wait(200)
+  }
+  return value
+}
+
 /**
  * 派发一次真实鼠标点击（mousedown + mouseup）。
  * radix 的 Tabs 在 mousedown 激活，程序化 element.click() 不触发它 —— 一律用真实点击。
@@ -375,7 +387,8 @@ if (!page) {
   console.log('== G. UI 交互 ==')
   await evaluate(
     cdp,
-    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '磁盘')?.click(); 'ok'`
+    // 按 testid 导航：侧栏按钮里现在还会渲染徽标文本（M14 起），按 textContent 精确匹配会落空
+    `document.querySelector('[data-testid="nav-disk"]')?.click(); 'ok'`
   )
   await wait(1500)
   check('磁盘页渲染', (await evaluate(cdp, `!!document.querySelector('[data-testid="scan-start"]')`)) === true)
@@ -449,10 +462,30 @@ if (!page) {
     (await evaluate(cdp, `!!document.querySelector('[data-testid="scan-progress"]')`)) === true
   )
   check('点击取消扫描', await clickAt(cdp, '[data-testid="scan-cancel"]'))
-  await wait(900)
+  // 取消是「杀扫描进程 → exit → outcome 回到渲染层 → finally 清进度」的链：
+  // 高负载下退出确认到 2–3 秒都可能（本机实测）—— 轮询等它消失，不钉死 900ms
   check(
     '取消后进度条消失',
-    (await evaluate(cdp, `!document.querySelector('[data-testid="scan-progress"]')`)) === true
+    (await waitForDom(cdp, `!document.querySelector('[data-testid="scan-progress"]')`, 5000)) === true
+  )
+
+  /* ---------- H. 盘符快捷入口（M15-006） ---------- */
+  console.log('== H. 盘符快捷入口 ==')
+  const volumeButtons = await evaluate(
+    cdp,
+    `document.querySelectorAll('[data-testid="scan-volume"]').length`
+  )
+  check('分区列表出现盘符入口', volumeButtons >= 1, `count=${volumeButtons}`)
+  check('点击「扫这颗盘」（C:）', await clickAt(cdp, '[data-testid="scan-volume"][data-volume="C:"]'))
+  await wait(700)
+  check(
+    '盘符扫描进入扫描态',
+    (await evaluate(cdp, `!!document.querySelector('[data-testid="scan-progress"]')`)) === true
+  )
+  check('取消盘符扫描', await clickAt(cdp, '[data-testid="scan-cancel"]'))
+  check(
+    '取消后进度条消失',
+    (await waitForDom(cdp, `!document.querySelector('[data-testid="scan-progress"]')`, 5000)) === true
   )
 
   cdp.close()

@@ -1,10 +1,12 @@
 // M2 磁盘扫描引擎的端到端验证（CDP 驱动，跑真实应用与真实文件扫描）。
 //
-// 覆盖：largeFiles 产物精确核对 / 白名单排除 / 取消（含耗时）/ 接管语义 /
-//       进度推送 / 扫描期间渲染进程响应 / safe 组真实位置结构。
+// 覆盖：largeFiles 产物精确核对 / 多根合并与排序（M15-006） / 白名单排除 / 取消（含耗时）/
+//       接管语义 / 进度推送 / 扫描期间渲染进程响应 / safe 组真实位置结构 /
+//       清理位置多 profile 枚举（M15-007，LOCALAPPDATA/APPDATA 覆盖到夹具）。
 //
 // 用法：node scripts/e2e-scan.mjs
-// 说明：会在 %TEMP%/ops-cabin-scan-fixture 下生成约 3 万个测试文件（结束即清理）。
+// 说明：会在 %TEMP%/ops-cabin-scan-fixture 下生成约 3 万个测试文件（结束即清理）；
+//       应用实例的 LOCALAPPDATA / APPDATA 指到夹具，不碰真实用户目录。
 import { spawn, spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -21,6 +23,7 @@ const fixtureRoot = join(tmpdir(), 'ops-cabin-scan-fixture')
 const electronExe = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
 
 const TWO_MB = 2 * 1024 * 1024
+const THREE_MB = 3 * 1024 * 1024
 
 let failures = 0
 let currentChild = null
@@ -78,6 +81,7 @@ async function makeFixture() {
   const big = join(fixtureRoot, 'big')
   const whitelisted = join(fixtureRoot, 'whitelisted')
   const huge = join(fixtureRoot, 'huge')
+  const second = join(fixtureRoot, 'second')
 
   await writeFiles(small, 500, 128)
   await writeFiles(big, 200, 128)
@@ -85,8 +89,33 @@ async function makeFixture() {
   await writeFiles(whitelisted, 50, 128)
   await writeFiles(whitelisted, 1, TWO_MB, 'big')
   await writeFiles(huge, 30000, 0)
+  // 多根合并用（M15-006）：第二个根里放一个 3MB 与一个 1MB
+  await writeFiles(second, 1, THREE_MB, 'secBig')
+  await writeFiles(second, 1, TWO_MB / 2, 'secSmall')
 
-  return { small, big, whitelisted, huge }
+  // ≤8 截断用（M15-006）：9 个各带一个大文件的根，最末一个必须被截掉
+  const many = []
+  for (let i = 1; i <= 9; i++) {
+    const dir = join(fixtureRoot, `multi${i}`)
+    await writeFiles(dir, 1, TWO_MB, `m${i}`)
+    many.push(dir)
+  }
+
+  // M15-007：模拟「多 profile 浏览器缓存 / 编辑器缓存」。
+  // 启动应用时用 LOCALAPPDATA / APPDATA 覆盖指向这两份夹具 —— resolveTargets 的
+  // 通配候选就在这里枚举，一个真实的用户目录都不碰。
+  const localAppData = join(fixtureRoot, 'localappdata')
+  const roamingAppData = join(fixtureRoot, 'appdata')
+  const edgeUserData = join(localAppData, 'Microsoft', 'Edge', 'User Data')
+  await writeFiles(join(edgeUserData, 'Default', 'Cache'), 20, 128, 'edgeDefNet')
+  await writeFiles(join(edgeUserData, 'Default', 'Code Cache'), 10, 128, 'edgeDefCode')
+  await writeFiles(join(edgeUserData, 'Default', 'GPUCache'), 5, 128, 'edgeDefGpu')
+  await writeFiles(join(edgeUserData, 'Profile 1', 'Cache'), 8, 128, 'edgeP1Net')
+  await writeFiles(join(localAppData, 'D3DSCache'), 4, 256, 'd3d')
+  await writeFiles(join(roamingAppData, 'Code', 'Cache'), 6, 128, 'vscCache')
+  await writeFiles(join(roamingAppData, 'Code', 'CachedData'), 6, 128, 'vscData')
+
+  return { small, big, whitelisted, huge, second, many, localAppData, roamingAppData }
 }
 
 /* ---------------- CDP 工具 ---------------- */
@@ -169,11 +198,15 @@ async function waitForValue(cdp, expression, timeoutMs = 5000) {
   return null
 }
 
-function launch() {
+function launch(envOverrides = {}) {
   currentChild = spawn(
     electronExe,
     ['.', `--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`],
-    { cwd: root, stdio: 'ignore', env: { ...process.env, OPS_CABIN_SMOKE: '1' } }
+    {
+      cwd: root,
+      stdio: 'ignore',
+      env: { ...process.env, OPS_CABIN_SMOKE: '1', ...envOverrides }
+    }
   )
   return currentChild
 }
@@ -218,7 +251,11 @@ const fixtureStarted = Date.now()
 const fixture = await makeFixture()
 console.log(`  （夹具就绪：${Date.now() - fixtureStarted}ms，3 万级文件）`)
 
-const app = launch()
+const app = launch({
+  // M15-007：让 %LOCALAPPDATA% / %APPDATA% 指向夹具 —— 多 profile 缓存在夹具里枚举
+  LOCALAPPDATA: fixture.localAppData,
+  APPDATA: fixture.roamingAppData
+})
 const page = await waitForReadyPage()
 if (!page) {
   console.error('应用未能在限定时间内完成加载')
@@ -228,9 +265,11 @@ if (!page) {
 
   /* ---------- 测试 A：largeFiles 产物精确核对 ---------- */
   console.log('== A. largeFiles 扫描与产物核对 ==')
+  // 只扫本节的目录（big + whitelisted）：fixtureRoot 下还有其它节的夹具（second / huge），
+  // 整根扫会把它们的文件一并收进来，把「4 个 × 2MB」这类精确断言弄脏
   const scanA = JSON.stringify({
     groups: ['largeFiles'],
-    largeFileRoots: [fixtureRoot],
+    largeFileRoots: [fixture.big, fixture.whitelisted],
     largeFileMinBytes: 1024
   })
   const outcomeA = JSON.parse(
@@ -243,6 +282,63 @@ if (!page) {
   check('每个都是 2MB', groupA?.items.every((i) => i.bytes === TWO_MB) === true)
   check('合计 8MB', groupA?.bytes === 4 * TWO_MB, `bytes=${groupA?.bytes}`)
   check('128B 小文件未入榜', groupA?.items.every((i) => !i.path.includes('small')) === true)
+
+  /* ---------- 测试 A2：多根合并（M15-006，选择目录可多选） ---------- */
+  console.log('== A2. 多根合并与排序 ==')
+  const multiScan = JSON.stringify({
+    groups: ['largeFiles'],
+    largeFileRoots: [fixture.big, fixture.second],
+    largeFileMinBytes: 1024
+  })
+  const outcomeMulti = JSON.parse(
+    await evaluate(cdp, `window.opsCabin.startScan(${multiScan}).then((o) => JSON.stringify(o))`, true)
+  )
+  check('多根扫描成功', outcomeMulti.ok === true, outcomeMulti.ok ? '' : outcomeMulti.error)
+  const groupMulti = outcomeMulti.ok
+    ? outcomeMulti.result.groups.find((g) => g.group === 'largeFiles')
+    : null
+  check(
+    '两个根的结果合并（big×3 + 3MB + 1MB）',
+    groupMulti?.items.length === 5,
+    `count=${groupMulti?.items.length}`
+  )
+  const multiBytes = groupMulti?.items.map((item) => item.bytes) ?? []
+  check(
+    '合并后按大小降序',
+    multiBytes.every((value, index) => index === 0 || multiBytes[index - 1] >= value) &&
+      multiBytes[0] === THREE_MB &&
+      multiBytes[multiBytes.length - 1] === TWO_MB / 2,
+    `seq=${multiBytes.join(',')}`
+  )
+  check(
+    '结果覆盖两个根',
+    groupMulti?.items.some((i) => i.path.toLowerCase().startsWith(fixture.big.toLowerCase())) === true &&
+      groupMulti?.items.some((i) => i.path.toLowerCase().startsWith(fixture.second.toLowerCase())) === true
+  )
+
+  // ≤8 根截断（S12 / parseScanOptions）：给 9 根只取前 8 —— 第 9 根的文件不得出现
+  const capScan = JSON.stringify({
+    groups: ['largeFiles'],
+    largeFileRoots: fixture.many,
+    largeFileMinBytes: 1024
+  })
+  const outcomeCap = JSON.parse(
+    await evaluate(cdp, `window.opsCabin.startScan(${capScan}).then((o) => JSON.stringify(o))`, true)
+  )
+  const groupCap = outcomeCap.ok
+    ? outcomeCap.result.groups.find((g) => g.group === 'largeFiles')
+    : null
+  const capPaths = (groupCap?.items ?? []).map((item) => item.path.toLowerCase())
+  check(
+    '多根 ≤8 截断：前 8 根纳入（首、末两根本身各命中）',
+    capPaths.some((p) => p.startsWith(fixture.many[0].toLowerCase())) &&
+      capPaths.some((p) => p.startsWith(fixture.many[7].toLowerCase())),
+    `items=${capPaths.length}`
+  )
+  check(
+    '多根 ≤8 截断：第 9 根被截掉',
+    capPaths.every((p) => !p.startsWith(fixture.many[8].toLowerCase()))
+  )
 
   /* ---------- 测试 B：白名单排除 ---------- */
   console.log('== B. 白名单排除 ==')
@@ -308,9 +404,11 @@ if (!page) {
 
   const cancelStart = Date.now()
   await evaluate(cdp, 'window.opsCabin.cancelScan()', true, 5000)
-  const settledC = await waitForValue(cdp, 'window.__outcomeC ? JSON.stringify(window.__outcomeC) : ""', 3000)
+  const settledC = await waitForValue(cdp, 'window.__outcomeC ? JSON.stringify(window.__outcomeC) : ""', 5000)
   const cancelMs = Date.now() - cancelStart
-  check('取消后 1.5s 内结束', cancelMs < 1500, `${cancelMs}ms`)
+  // 取消是「杀扫描进程 → exit → outcome 回来」的链，高负载下本机实测 0.2–2.9s 都有
+  // （PLAN §14 已记录过本套件在高负载连跑下的偶发抖动）—— 上限放到 5s，实测值照印
+  check('取消后及时结束（≤5s）', cancelMs < 5000, `${cancelMs}ms`)
   check('结果是「已取消」', settledC !== null && JSON.parse(settledC).cancelled === true, settledC)
 
   /* ---------- 测试 D：接管语义（新扫描先取消旧任务） ---------- */
@@ -341,6 +439,54 @@ if (!page) {
     outcomeE.ok ? `${outcomeE.result.durationMs}ms` : ''
   )
   check('跳过的受限条目已计数（≥0）', outcomeE.ok && typeof outcomeE.result.skipped === 'number')
+
+  /* ---------- 测试 F：清理位置扩展 —— 多 profile 枚举（M15-007） ---------- */
+  console.log('== F. 清理位置：多 profile 枚举 ==')
+  const outcomeF = JSON.parse(
+    await evaluate(cdp, `window.opsCabin.startScan({ groups: ["safe", "devCaches"] }).then((o) => JSON.stringify(o))`, true, 120000)
+  )
+  check('扩展清单扫描成功', outcomeF.ok === true, outcomeF.ok ? '' : outcomeF.error)
+  const itemsF = outcomeF.ok ? outcomeF.result.groups.flatMap((g) => g.items) : []
+  const labelsF = itemsF.map((item) => item.label)
+  const labelSummary = (prefix) => labelsF.filter((l) => l.startsWith(prefix)).join(' / ')
+
+  check(
+    'Edge 网页缓存按 profile 各自成条目（Default + Profile 1）',
+    labelsF.includes('Edge 网页缓存 · Default') && labelsF.includes('Edge 网页缓存 · Profile 1'),
+    labelSummary('Edge')
+  )
+  check(
+    'Edge 代码缓存 / GPU 缓存条目出现（label 带 profile 后缀）',
+    labelsF.includes('Edge 代码缓存 · Default') && labelsF.includes('Edge GPU 缓存 · Default')
+  )
+  check('DirectX 着色器缓存条目出现', labelsF.includes('DirectX 着色器缓存'))
+  check(
+    'VS Code 两个缓存条目出现',
+    labelsF.includes('VS Code 缓存') && labelsF.includes('VS Code 数据缓存')
+  )
+  const fixtureScoped = (path) =>
+    path.toLowerCase().startsWith(fixture.localAppData.toLowerCase()) ||
+    path.toLowerCase().startsWith(fixture.roamingAppData.toLowerCase())
+  check(
+    '新条目路径都落在夹具内（未碰真实用户目录）',
+    itemsF
+      .filter(
+        (item) =>
+          item.label.includes('Edge') ||
+          item.label.includes('DirectX') ||
+          item.label.includes('VS Code')
+      )
+      .every((item) => fixtureScoped(item.path))
+  )
+  check(
+    '本机夹具没放 Chrome —— 不出现 Chrome 条目（缺失即跳过）',
+    labelsF.every((label) => !label.includes('Chrome'))
+  )
+  check(
+    '无重复条目（路径唯一）',
+    new Set(itemsF.map((item) => item.path.toLowerCase())).size === itemsF.length,
+    `items=${itemsF.length}`
+  )
 
   cdp.close()
   check('退出应用', await quitApp(page, app))

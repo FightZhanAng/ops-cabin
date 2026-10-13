@@ -8,10 +8,12 @@ import { Button } from '@/components/ui/button'
 interface Props {
   volumes: VolumeInfo[]
   onRefresh: () => void
+  /** 对某颗盘整盘扫描大文件（根目录 = 盘符根） */
+  onScanVolume: (volume: string) => void
 }
 
-/** 左轨：每个分区一条分段仪表条 + 剩余读数（剩余 <10GB 转琥珀、<5GB 转红） */
-export function PartitionList({ volumes, onRefresh }: Props): JSX.Element {
+/** 左轨：每分区一条分段仪表 + 剩余读数 + 「扫这颗盘」入口（剩余 <10GB 转琥珀、<5GB 转红） */
+export function PartitionList({ volumes, onRefresh, onScanVolume }: Props): JSX.Element {
   return (
     <aside className="flex w-[184px] shrink-0 flex-col border-r border-line bg-panel">
       <header className="flex items-start justify-between gap-1 pb-2.5 pl-3 pr-1.5 pt-3">
@@ -59,6 +61,17 @@ export function PartitionList({ volumes, onRefresh }: Props): JSX.Element {
                 <span className="truncate">剩余 {formatBytes(volume.free)}</span>
                 <span className="shrink-0">共 {formatBytes(volume.total)}</span>
               </div>
+              <Button
+                variant="outline"
+                size="xs"
+                className="mt-2 w-full"
+                onClick={() => onScanVolume(volume.name)}
+                aria-label={`扫描 ${volume.name} 的大文件`}
+                data-testid="scan-volume"
+                data-volume={volume.name}
+              >
+                扫这颗盘
+              </Button>
             </div>
           )
         })}

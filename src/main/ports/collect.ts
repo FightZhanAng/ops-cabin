@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import type { PortEntry, PortProtocol, PortsSnapshot } from '../../shared/ports'
-import { runPowerShell } from '../powershell'
+import { processTable } from '../processes'
 
 /* ------------------------------------------------------------ netstat */
 
@@ -63,91 +63,10 @@ export function parseNetstat(output: string): RawListener[] {
 
 /* ------------------------------------------------------------ 进程表 */
 
-interface ProcessInfo {
-  name: string
-  path: string | null
-  commandLine: string | null
-  memoryBytes: number
-  startedAt: number
-}
-
-const PROCESS_TABLE_TTL = 10_000
-
-/**
- * 进程信息缓存（10 秒）。
- * 新启动的进程在缓存里不存在时会强制刷新一次 —— 刚起的开发服务器
- * 不该等到缓存过期才能在界面上认出名字。
+/*
+ * 进程表已抽到 src/main/processes.ts —— 端口页与总览的进程榜共用一份采集，
+ * 免得两个页面各spawn一个 PowerShell 去问同一件事。
  */
-class ProcessTable {
-  #map = new Map<number, ProcessInfo>()
-  #fetchedAt = 0
-  #inflight: Promise<void> | null = null
-
-  async get(): Promise<Map<number, ProcessInfo>> {
-    if (Date.now() - this.#fetchedAt > PROCESS_TABLE_TTL) await this.#refresh()
-    return this.#map
-  }
-
-  async refreshIfMissing(pids: number[]): Promise<Map<number, ProcessInfo>> {
-    const hasMissing = pids.some((pid) => pid > 0 && !this.#map.has(pid))
-    if (hasMissing) await this.#refresh()
-    return this.#map
-  }
-
-  #refresh(): Promise<void> {
-    if (this.#inflight) return this.#inflight
-    this.#inflight = (async () => {
-      try {
-        this.#map = await fetchProcessTable()
-      } catch {
-        /* 进程表拿不到：保留旧表，采集降级但可用 */
-      } finally {
-        this.#fetchedAt = Date.now()
-        this.#inflight = null
-      }
-    })()
-    return this.#inflight
-  }
-}
-
-const processTable = new ProcessTable()
-
-async function fetchProcessTable(): Promise<Map<number, ProcessInfo>> {
-  const script = [
-    '$items = Get-CimInstance Win32_Process | ForEach-Object {',
-    '  $cmd = $_.CommandLine',
-    '  if ($cmd -ne $null -and $cmd.Length -gt 512) { $cmd = $cmd.Substring(0, 512) }',
-    '  $created = 0',
-    '  if ($_.CreationDate) { $created = [long](($_.CreationDate.ToUniversalTime().Ticks - 621355968000000000) / 10000) }',
-    '  [PSCustomObject]@{ pid = $_.ProcessId; name = $_.Name; path = $_.ExecutablePath; cmd = $cmd; mem = $_.WorkingSetSize; created = $created }',
-    '}',
-    'ConvertTo-Json -InputObject @($items) -Compress -Depth 3'
-  ].join('\n')
-
-  const output = await runPowerShell(script, 20000)
-  const map = new Map<number, ProcessInfo>()
-  let rows: unknown
-  try {
-    rows = JSON.parse(output)
-  } catch {
-    return map
-  }
-  const list = Array.isArray(rows) ? rows : [rows]
-  for (const row of list) {
-    if (row === null || typeof row !== 'object') continue
-    const rec = row as Record<string, unknown>
-    const pid = Number(rec.pid)
-    if (!Number.isInteger(pid) || pid <= 0) continue
-    map.set(pid, {
-      name: typeof rec.name === 'string' && rec.name.length > 0 ? rec.name : `PID ${pid}`,
-      path: typeof rec.path === 'string' ? rec.path : null,
-      commandLine: typeof rec.cmd === 'string' ? rec.cmd : null,
-      memoryBytes: Number.isFinite(Number(rec.mem)) ? Number(rec.mem) : 0,
-      startedAt: Number.isFinite(Number(rec.created)) ? Number(rec.created) : 0
-    })
-  }
-  return map
-}
 
 /* ------------------------------------------------------------ 采集 */
 

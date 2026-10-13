@@ -28,7 +28,7 @@ const GROUP_LABEL: Record<ScanGroupKey, string> = {
 const EMPTY_HINT: Record<ScanGroupKey, string> = {
   safe: '还没有扫描结果 —— 点「开始扫描」检查系统临时文件与开发缓存。',
   devCaches: '还没有扫描结果 —— 点「开始扫描」检查系统临时文件与开发缓存。',
-  largeFiles: '大文件扫描需要指定目录：点上方「扫描主目录」或「选择目录…」。'
+  largeFiles: '大文件扫描需要指定范围：左侧「扫这颗盘」整盘扫，或上方「扫描主目录」「选择目录…」（可多选）。'
 }
 
 /** 磁盘页：扫描 → 勾选 → 预览 → 清理 → 反馈，自上而下就是这条流水线 */
@@ -102,8 +102,16 @@ export function DiskView(): JSX.Element {
 
   const pickAndScanLarge = useCallback(async (): Promise<void> => {
     const picked = await window.opsCabin.pickDirectory()
-    if (picked) await scanLargeIn([picked])
+    if (picked.length > 0) await scanLargeIn(picked)
   }, [scanLargeIn])
+
+  /** 盘符快捷入口：右侧分区列表点「扫这颗盘」→ 以盘根为根扫描 */
+  const scanVolume = useCallback(
+    (volume: string): void => {
+      void scanLargeIn([`${volume}\\`])
+    },
+    [scanLargeIn]
+  )
 
   const activeItems = useMemo(() => {
     const group = groups.find((g) => g.group === tab)
@@ -173,7 +181,7 @@ export function DiskView(): JSX.Element {
     <div className="flex h-full min-h-0 flex-col">
       {/* 上半区：左轨分区读数 + 主区流水线 + 右滑详情 */}
       <div className="flex min-h-0 flex-1">
-        <PartitionList volumes={volumes} onRefresh={loadVolumes} />
+        <PartitionList volumes={volumes} onRefresh={loadVolumes} onScanVolume={scanVolume} />
 
         <div className="flex min-w-0 flex-1 flex-col">
           {/* 工具条：动作在左、读数在右 */}

@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { RiskLevel, ScanGroupKey } from '../../shared/disk'
@@ -8,7 +8,11 @@ interface LocationDef {
   group: 'safe' | 'devCaches'
   label: string
   risk: RiskLevel
-  /** 候选路径（支持 %ENV% 与 ~），取第一个存在的 */
+  /**
+   * 候选路径（支持 %ENV% 与 ~），取第一个存在的。
+   * 路径里允许出现一段 `*`（profile / 多实例目录）：命中的每个目录各自成条目，
+   * 条目名是 `label · 目录名`。
+   */
   candidates: string[]
   note?: string
 }
@@ -30,6 +34,71 @@ const DEFINITIONS: LocationDef[] = [
     note: '资源管理器会自动重建；清理时可能有文件正被占用'
   },
 
+  /* 浏览器缓存与着色器缓存（低风险：自动重建 / 重新下载；运行中的浏览器会锁住部分文件） */
+  {
+    group: 'safe',
+    label: 'Chrome 网页缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Cache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件，登录状态不受影响'
+  },
+  {
+    group: 'safe',
+    label: 'Chrome 代码缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\Code Cache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件'
+  },
+  {
+    group: 'safe',
+    label: 'Chrome GPU 缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Google\\Chrome\\User Data\\*\\GPUCache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件'
+  },
+  {
+    group: 'safe',
+    label: 'Edge 网页缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Cache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件，登录状态不受影响'
+  },
+  {
+    group: 'safe',
+    label: 'Edge 代码缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\Code Cache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件'
+  },
+  {
+    group: 'safe',
+    label: 'Edge GPU 缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\Microsoft\\Edge\\User Data\\*\\GPUCache'],
+    note: '浏览器会自动重建；正在运行的浏览器可能锁住部分文件'
+  },
+  {
+    group: 'safe',
+    label: 'DirectX 着色器缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\D3DSCache'],
+    note: '游戏与应用会按需重新编译着色器'
+  },
+  {
+    group: 'safe',
+    label: 'NVIDIA DX 着色器缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\NVIDIA\\DXCache'],
+    note: '游戏与应用会按需重新编译着色器'
+  },
+  {
+    group: 'safe',
+    label: 'NVIDIA GL 着色器缓存',
+    risk: 'safe',
+    candidates: ['%LOCALAPPDATA%\\NVIDIA\\GLCache'],
+    note: '游戏与应用会按需重新编译着色器'
+  },
+
   /* ---------------- 开发缓存 ---------------- */
   { group: 'devCaches', label: 'npm 缓存', risk: 'safe', candidates: ['%LOCALAPPDATA%\\npm-cache'] },
   {
@@ -46,6 +115,20 @@ const DEFINITIONS: LocationDef[] = [
     label: 'Electron 下载缓存',
     risk: 'safe',
     candidates: ['%LOCALAPPDATA%\\electron\\Cache']
+  },
+  {
+    group: 'devCaches',
+    label: 'VS Code 缓存',
+    risk: 'safe',
+    candidates: ['%APPDATA%\\Code\\Cache'],
+    note: 'VS Code 会自动重建；扩展与设置不受影响'
+  },
+  {
+    group: 'devCaches',
+    label: 'VS Code 数据缓存',
+    risk: 'safe',
+    candidates: ['%APPDATA%\\Code\\CachedData'],
+    note: 'VS Code 会自动重建；扩展与设置不受影响'
   },
   {
     group: 'devCaches',
@@ -125,15 +208,61 @@ export function isExcluded(pathValue: string, prefixes: string[]): boolean {
   return false
 }
 
-/** 按分组展开固定扫描位置（只返回真实存在的路径） */
+/**
+ * 展开一个候选路径。
+ *
+ * 不带 `*`：存在即返回单个结果（旧语义）。
+ * 带一段 `*`（profile / 多实例目录）：以星号前的部分为基目录枚举子目录，
+ * 每个命中的目录各自成一条 —— 条目名带目录名后缀，多 profile 一眼分得清。
+ * 只支持一段星号：需要的是 profile 枚举，不是通用 glob。
+ */
+function expandCandidate(candidate: string): { path: string; suffix?: string }[] {
+  const expanded = expandPath(candidate)
+  if (!expanded) return []
+  const star = expanded.indexOf('*')
+  if (star < 0) return existsSync(expanded) ? [{ path: expanded }] : []
+
+  const base = expanded.slice(0, star).replace(/[\\/]+$/, '')
+  const tail = expanded
+    .slice(star + 1)
+    .split(/[\\/]+/)
+    .filter((segment) => segment.length > 0)
+  if (base.length === 0 || !existsSync(base)) return []
+
+  let entries: ReturnType<typeof readdirSync>
+  try {
+    entries = readdirSync(base, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const out: { path: string; suffix?: string }[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    const path = join(base, entry.name, ...tail)
+    if (existsSync(path)) out.push({ path, suffix: entry.name })
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path))
+  return out
+}
+
+/** 按分组展开固定扫描位置（只返回真实存在的路径；通配候选按目录各自成条目） */
 export function resolveTargets(groups: ScanGroupKey[]): ResolvedTarget[] {
   const out: ResolvedTarget[] = []
   for (const def of DEFINITIONS) {
     if (!groups.includes(def.group)) continue
     for (const candidate of def.candidates) {
-      const expanded = expandPath(candidate)
-      if (!expanded || !existsSync(expanded)) continue
-      out.push({ group: def.group, label: def.label, path: expanded, risk: def.risk, note: def.note })
+      const matches = expandCandidate(candidate)
+      if (matches.length === 0) continue
+      for (const match of matches) {
+        out.push({
+          group: def.group,
+          label: match.suffix !== undefined ? `${def.label} · ${match.suffix}` : def.label,
+          path: match.path,
+          risk: def.risk,
+          note: def.note
+        })
+      }
+      // 候选是 fallback 语义：命中一个候选就不再试后面的（同旧行为）
       break
     }
   }

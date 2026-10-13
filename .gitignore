@@ -7,3 +7,12 @@ release/
 *.log
 .DS_Store
 Thumbs.db
+
+# 工作区里的助手产物：工作记忆（每日日志 / 长期笔记）与一次性工具脚本。
+# 这个仓库是公开的，工作记忆里会写到本机路径、服务名、真实读数与排障过程 ——
+# 不该跟着 commit 出去。要共享的脚本请显式 `git add -f`。
+.workbuddy/
+
+# 构建链的过程记录（grill / to-spec / to-tickets 的工作区）：拆解票据与草稿。
+# 沉淀后的结论在 docs/specs 与 docs/adr —— 这里留过程，不入库。
+.scratch/

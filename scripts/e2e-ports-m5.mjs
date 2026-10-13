@@ -265,7 +265,8 @@ if (!page) {
   )
   await evaluate(
     cdp,
-    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '端口')?.click(); 'ok'`
+    // 按 testid 导航：侧栏按钮里现在还会渲染徽标文本（M14 起），按 textContent 精确匹配会落空
+    `document.querySelector('[data-testid="nav-ports"]')?.click(); 'ok'`
   )
   await waitForDom(cdp, `!!document.querySelector('[data-testid="watch-grid"]')`, 8000)
   await wait(500)
@@ -465,12 +466,12 @@ if (!page) {
   console.log('== J. 页面切换重订阅 ==')
   await evaluate(
     cdp,
-    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '磁盘')?.click(); 'ok'`
+    `document.querySelector('[data-testid="nav-disk"]')?.click(); 'ok'`
   )
   await wait(600)
   await evaluate(
     cdp,
-    `[...document.querySelectorAll('nav button')].find((b) => b.textContent === '端口')?.click(); 'ok'`
+    `document.querySelector('[data-testid="nav-ports"]')?.click(); 'ok'`
   )
   check(
     '切回后表格仍有数据（重订阅生效）',

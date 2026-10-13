@@ -94,6 +94,17 @@ export interface CleanResult {
 /** 清理调用的结果 */
 export type CleanOutcome = { ok: true; result: CleanResult } | { ok: false; error: string }
 
+/**
+ * 一次清理的历史记录（userData/clean-history.json 的条目）。
+ * 由主进程在清理成功后追加，总览的统计图只读消费。
+ */
+export interface CleanHistoryEntry {
+  at: number
+  mode: CleanMode
+  freedBytes: number
+  itemCount: number
+}
+
 /* ------------------------------------------------------------ 分区 */
 
 export interface VolumeInfo {

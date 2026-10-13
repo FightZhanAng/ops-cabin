@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
-import type { VolumeInfo } from '@shared/disk'
+import type { CleanHistoryEntry, VolumeInfo } from '@shared/disk'
 import type { PortChange, PortsSnapshot, WatchItem } from '@shared/ports'
 import { Bay, Plate } from '@/components/instrument/plate'
 import { AlertFeed } from '@/components/overview/AlertFeed'
+import { CleanupStats } from '@/components/overview/CleanupStats'
+import { HostsPanel } from '@/components/overview/HostsPanel'
 import { MetricsPanel } from '@/components/overview/MetricsPanel'
+import { NetCheckPanel } from '@/components/overview/NetCheckPanel'
 import { PartitionBars } from '@/components/overview/PartitionBars'
+import { ResourceTrend } from '@/components/overview/ResourceTrend'
+import { TopProcesses } from '@/components/overview/TopProcesses'
 import { WatchGrid } from '@/components/ports/WatchGrid'
 
 interface Props {
@@ -18,6 +23,7 @@ export function OverviewView({ onNavigate }: Props): JSX.Element {
   const [snapshot, setSnapshot] = useState<PortsSnapshot | null>(null)
   const [watchlist, setWatchlist] = useState<WatchItem[]>([])
   const [changes, setChanges] = useState<PortChange[]>([])
+  const [cleanHistory, setCleanHistory] = useState<CleanHistoryEntry[]>([])
 
   const loadVolumes = useCallback((): void => {
     window.opsCabin
@@ -28,6 +34,17 @@ export function OverviewView({ onNavigate }: Props): JSX.Element {
   useEffect(() => {
     loadVolumes()
   }, [loadVolumes])
+
+  // 清理历史（每次进总览现读一次：清理发生在磁盘页，回到这里自然是最新的）
+  useEffect(() => {
+    let alive = true
+    void window.opsCabin.listCleanHistory().then((entries) => {
+      if (alive) setCleanHistory(entries)
+    })
+    return () => {
+      alive = false
+    }
+  }, [])
 
   // 端口数据（总览同样实时刷新；离开页面即退订）
   useEffect(() => {
@@ -78,6 +95,66 @@ export function OverviewView({ onNavigate }: Props): JSX.Element {
             <PartitionBars volumes={volumes} />
           </Bay>
           <MetricsPanel />
+        </Plate>
+
+        <Plate>
+          <Bay
+            eyebrow="TREND · 7 DAYS"
+            title="长期趋势"
+            aside={<span className="eyebrow text-faint">每 5 分钟一个点</span>}
+            data-testid="overview-trend"
+          >
+            <ResourceTrend />
+          </Bay>
+        </Plate>
+
+        <Plate>
+          <Bay
+            eyebrow="CLEANUP · HISTORY"
+            title="清理记录"
+            aside={
+              <span className="num text-[10.5px] text-faint">
+                {cleanHistory.length > 0
+                  ? `${cleanHistory.length} 次 · 进入磁盘页`
+                  : '进入磁盘页'}
+              </span>
+            }
+            tooltip="点击进入磁盘页"
+            onClick={() => onNavigate('disk')}
+            data-testid="overview-cleanup"
+          >
+            <CleanupStats entries={cleanHistory} />
+          </Bay>
+        </Plate>
+
+        <Plate className="grid-cols-[minmax(0,3fr)_minmax(0,2fr)] max-[880px]:grid-cols-1">
+          <Bay
+            eyebrow="PROCESS · TOP"
+            title="进程榜"
+            aside={<span className="text-[10.5px] text-dim">只读 · 结束进程在端口页</span>}
+            data-testid="overview-processes"
+          >
+            <TopProcesses />
+          </Bay>
+          <Bay
+            eyebrow="NET · DIAG"
+            title="联网体检"
+            aside={<span className="text-[10.5px] text-dim">发版前先看一眼</span>}
+            data-testid="overview-netcheck"
+          >
+            <NetCheckPanel />
+          </Bay>
+        </Plate>
+
+        <Plate>
+          <Bay
+            eyebrow="HOSTS · FILE"
+            title="域名改写"
+            aside={<span className="text-[10.5px] text-dim">只读 · 在系统 hosts 文件里改</span>}
+            data-testid="overview-hosts"
+          >
+            <HostsPanel />
+          </Bay>
         </Plate>
 
         <Plate>
