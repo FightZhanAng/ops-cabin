@@ -989,3 +989,18 @@ README 三张截图取自 0.3.0 冒烟（浅色总览 / 浅色端口 / 深色总
 
 **上一轮人工待办的进展**：§23.6 的真实 UAC 全链清单仍待人工执行（自检模式下短路提权，
 自动化覆盖不到）；「安装包双击实测」仍有效 —— 本版新增的写操作在安装版上的表现值得一并过。
+
+**首跑结果（2026-10-13）**：tag `v0.3.0` → run
+[38358380094](https://github.com/FightZhanAng/ops-cabin/actions/runs/38358380094) 在 typecheck
+阶段红 —— `scanner/categories.ts` 的 `readdirSync` 返回类型（`ReturnType<typeof readdirSync>`
+取到的是重载表里的 Buffer 变体，与 `{ withFileTypes: true }` 的实际返回对不上）。
+修复（`180344f`）后重打同一 tag（该版本未产生 Release），二跑 run
+[38358693144](https://github.com/FightZhanAng/ops-cabin/actions/runs/38358693144)
+**2 分 19 秒全绿**（typecheck → dist → 资产上传）；Release
+[v0.3.0](https://github.com/FightZhanAng/ops-cabin/releases/tag/v0.3.0) 四类资产齐备
+（setup 96.28MB / portable 96.07MB / `latest.yml` / `.blockmap`）。CI 唯一提示仍是
+`actions/*` 的 Node 20 运行时弃用警告（不影响）。
+
+**教训一条**：本地 e2e 跑的是不带类型检查的构建（esbuild 剥类型），「构建绿」≠
+「typecheck 绿」—— 发版前本地必须补跑一次 `pnpm typecheck`（本次它被 CI 拦住，
+本地断言「typecheck 通过」的书面记录早于最后一次改动，属漏跑）。
