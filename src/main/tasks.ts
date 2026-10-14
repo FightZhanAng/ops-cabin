@@ -282,6 +282,10 @@ function parseOutput(output: string): ParsedTasks {
     // 那种情况按「有效」处理，否则会凭一个拿不到的路径报假故障。
     // exec 走 parseExecPath 是必须的 —— 有的安装程序把引号写进了任务 XML 的
     // <Command> 里（本机 WPS、Snipaste 都是），直接 existsSync 会 100% 误报失效。
+    //
+    // isExecPathValid 现在是三态判定的布尔投影：**只有确证不存在才是 false**
+    // （ENOENT / ENOTDIR）。解析不出路径、裸命令名、指向目录、EPERM 读不到一律为
+    // true —— 这些「判不了」的情况以前会被判成 missing，从而给出删除入口。
     const hasExec = parseNumber(actionType) === ACTION_EXEC && exec.length > 0
     const execPath = hasExec ? parseExecPath(exec) : null
     const pathExists = hasExec ? isExecPathValid(execPath) : true

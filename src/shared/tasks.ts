@@ -147,12 +147,24 @@ export function decodeTaskResult(code: number): TaskResult {
   if (value === 0) return { code: value, ok: true, text: '成功' }
 
   // 调度器自己的状态码：都不是失败
+  // 取值依据 WinError.h（SCHED_S_* 全是「成功常量」，见
+  // https://learn.microsoft.com/windows/win32/taskschd/task-scheduler-error-and-success-constants）
   const STATE: Record<number, string> = {
     0x41300: '就绪',
     0x41301: '正在运行',
     0x41302: '已禁用',
     0x41303: '尚未运行',
-    0x41304: '没有更多运行'
+    0x41304: '没有更多运行',
+    // 下面三个原表里漏了，会落到兜底分支被印成「失败 · 0x00041305」这类假警报。
+    // 它们同样是成功常量：0x41305 = 缺少排期所需属性；0x41306 = 上次运行被用户
+    // 终止（关机/注销打断也算）；0x41307 = 没有触发器、触发器被禁用或未设置。
+    // 本机 142 个任务里 0x41303 出现 65 次，说明这张表命中的都是常见值 ——
+    // 漏一个就是一批假警报。
+    0x41305: '未排期（缺少排期属性）',
+    0x41306: '上次运行被终止',
+    0x41307: '没有有效触发器',
+    0x41308: '事件触发（无固定运行时间）',
+    0x41325: '已排队等待运行'
   }
   const state = STATE[value]
   if (state !== undefined) return { code: value, ok: true, text: state }
@@ -171,6 +183,26 @@ export function decodeTaskResult(code: number): TaskResult {
   if (win32 !== null && win32 !== 0) {
     const known = WIN32_TEXT[win32]
     return { code: value, ok: false, text: `失败 · ${known ?? `Win32 错误 ${win32}`}` }
+  }
+
+  /*
+   * 兜底前先看 HRESULT 的严重性位（bit 31）：**为 0 表示成功/信息级**。
+   *
+   * 不看这一位会把「任务自己返回的自定义非零结果」一律印成失败。本机实测就有
+   * 两例：0x10000000（BitLocker 维护任务）被报「失败 · 0x10000000」，而该任务的
+   * bit31 为 0 —— 按微软的 HRESULT 规范属于成功级；运维舱的判据原则是「误报让人
+   * 去修一个其实正常的东西」，这类假警报必须挡掉。
+   *
+   * 措辞刻意保守：只说「完成（自定义结果）」而不宣称「成功」—— bit31 只能证明
+   * 它不是失败级，证明不了业务上一定成功。已知的失败形态（0x8007xxxx、
+   * STATUS_TEXT 里那批、以及 bit31 为 1 的）都在上面被拦住了。
+   */
+  if ((value & 0x80000000) >>> 0 === 0) {
+    return {
+      code: value,
+      ok: true,
+      text: `完成（自定义结果 0x${value.toString(16).toUpperCase().padStart(8, '0')}）`
+    }
   }
 
   return { code: value, ok: false, text: `失败 · 0x${value.toString(16).toUpperCase().padStart(8, '0')}` }
