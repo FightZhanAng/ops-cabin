@@ -42,7 +42,30 @@ export async function elevateAutoOp(op: AutoOp): Promise<AutoResult> {
   const payloadFile = join(tmpdir(), `ops-cabin-apply-${nonce}.json`)
   const resultFile = `${payloadFile}.result`
   const payload: HelperPayload = { nonce, at: Date.now(), op }
-  writeFileSync(payloadFile, JSON.stringify(payload), 'utf8')
+  /*
+   * 用 'wx' 独占创建：文件已存在就直接失败（EEXIST），绝不覆盖。
+   *
+   * 这样至少封死「预置一个同命名规则的文件、等我们写进去」与「在写入前占位」
+   * 这两种做法 —— nonce 是 16 字节随机，攻击者猜不到名字，但他可以让目录里
+   * 预先堆满候选名，或者让写入落到一个已有硬链接上。独占标志把这条路堵掉。
+   *
+   * 注意威胁模型如实说明：这挡不住「同用户进程在写入之后、助手读取之前改写
+   * 文件内容」（TOCTOU）—— 那需要把参数挪出可写文件（改走命令行）才能根治，
+   * 属于待办，见 docs/adr/0001 与 CODE-REVIEW-REPORT.md 的问题 #1。
+   */
+  try {
+    writeFileSync(payloadFile, JSON.stringify(payload), { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code
+    return {
+      ok: false,
+      reason: 'failed',
+      message:
+        code === 'EEXIST'
+          ? '请求文件已被占用（可能有同名文件），已中止提权'
+          : `无法准备提权请求：${error instanceof Error ? error.message : String(error)}`
+    }
+  }
   try {
     const args = app.isPackaged
       ? `--apply-op "${payloadFile}"`
@@ -75,8 +98,23 @@ export async function elevateAutoOp(op: AutoOp): Promise<AutoResult> {
     return normalizeHelperResult(readFileSync(resultFile, 'utf8'))
   } finally {
     // 成功 / 失败 / 取消都不留临时文件
-    rmSync(payloadFile, { force: true })
-    rmSync(resultFile, { force: true })
+    /*
+     * 清理失败也必须咽下去：`force: true` 只忽略 ENOENT，文件被杀软 / 索引器 /
+     * 提权助手持有时会抛 EPERM / EBUSY。而这里在 `finally` 里 —— 抛出去会把
+     * 一个**已经成功的提权结果**替换成异常，调用方拿到 reject 而不是
+     * `{ ok: true }`，用户看到「操作失败」而实际上启用位已经改好了。
+     * 残留的两个临时文件无害（助手下次不会再用同一个 nonce）。
+     */
+    try {
+      rmSync(payloadFile, { force: true })
+    } catch {
+      /* 残留无害，不覆盖真实结果 */
+    }
+    try {
+      rmSync(resultFile, { force: true })
+    } catch {
+      /* 同上 */
+    }
   }
 }
 
