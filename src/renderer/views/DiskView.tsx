@@ -71,7 +71,10 @@ export function DiskView(): JSX.Element {
         setSkipped(outcome.result.skipped)
         setSelected(new Set())
         setFocusItem(null)
-        // 按组替换：本次扫了哪几组就换哪几组，其余保留
+        // 按组替换：本次扫了哪几组就换哪几组，其余保留。
+        // 主进程侧的可删集合用的是**并集**（cleaner.registerScanned），
+        // 所以这里保留下来的旧组行仍然可删 —— 两侧语义必须一致，否则
+        // 用户勾选旧组走完二次确认会一项都删不掉。
         setGroups((prev) => {
           const byKey = new Map(prev.map((group) => [group.group, group]))
           for (const key of keys) {

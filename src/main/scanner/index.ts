@@ -5,6 +5,7 @@ import type { ScanGroupKey, ScanOptions, ScanOutcome, ScanProgress } from '../..
 import {
   LARGE_FILE_MIN_BYTES,
   LARGE_FILE_TOP_N,
+  coversExcluded,
   isExcluded,
   normalizeForCompare,
   resolveTargets
@@ -14,6 +15,15 @@ import type { WorkerMessage, WorkerTask } from './protocol'
 export interface ScannerCallbacks {
   onProgress: (progress: ScanProgress) => void
 }
+
+/**
+ * 整条扫描链的兜底超时。
+ *
+ * worker 卡住（网络盘 / 挂载点不返回、子进程死锁）时 `Scanner.start` 永不 settle：
+ * 进度条一直转，而 `busy` 恒为真会让后续每次「重新扫描」只是在取消一个已经卡死
+ * 的任务。10 分钟对正常扫描足够宽松（本机几秒到几十秒），超时按失败上报并杀进程。
+ */
+const SCAN_TIMEOUT_MS = 10 * 60_000
 
 /** 校验并收敛渲染层传来的扫描参数 */
 export function parseScanOptions(raw: unknown): ScanOptions {
@@ -72,9 +82,30 @@ export class Scanner {
       })
       this.#child = child
 
+      /*
+       * 整条扫描链的兜底超时。
+       *
+       * 没有它的话，worker 卡住（某个网络盘 / 挂载点不返回、子进程死锁）就永远
+       * 不 settle：界面上的进度条一直转，而 `busy` 恒为真会让后续每次「重新扫描」
+       * 都只是取消一个已经卡死的任务。超时按失败上报，并把子进程杀掉 ——
+       * 进程一死，它占着的遍历与句柄全部释放（与 cancel 同一手段）。
+       *
+       * 取值：单次扫描的正常耗时在本机是几秒到几十秒（大文件遍历通常最长），
+       * 10 分钟足够宽松，不会误杀正常扫描。
+       */
+      const timeout = setTimeout(() => {
+        settle({
+          ok: false,
+          cancelled: false,
+          error: `扫描超时（超过 ${Math.round(SCAN_TIMEOUT_MS / 60_000)} 分钟未完成）`
+        })
+      }, SCAN_TIMEOUT_MS)
+      timeout.unref?.()
+
       const settle = (outcome: ScanOutcome): void => {
         if (settled) return
         settled = true
+        clearTimeout(timeout)
         if (this.#child === child) this.#child = null
         try {
           child.kill()
@@ -125,7 +156,15 @@ function buildTask(options: ScanOptions, whitelist: string[]): WorkerTask {
         : [homedir()]
   }
   return {
-    targets: resolveTargets(groups).filter((t) => !isExcluded(t.path, exclude)),
+    // 两道过滤，方向相反、缺一不可：
+    //   · isExcluded    —— 候选自身就在白名单里（或在其下），跳过；
+    //   · coversExcluded —— 候选**包含**白名单目录（例如白名单设了 %TEMP%\keep，
+    //     而候选是整个 %TEMP%）。这种整目录候选删的时候是递归删除，会把受保护
+    //     目录一起带走；而测体积时已经跳过了它，于是「预计释放」还偏小。
+    //     直接剔除，别让界面给出一个注定会误删的候选。
+    targets: resolveTargets(groups).filter(
+      (t) => !isExcluded(t.path, exclude) && !coversExcluded(t.path, exclude)
+    ),
     largeFileRoots: roots,
     largeFileMinBytes: options.largeFileMinBytes ?? LARGE_FILE_MIN_BYTES,
     exclude,

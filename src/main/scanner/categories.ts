@@ -106,7 +106,16 @@ const DEFINITIONS: LocationDef[] = [
     group: 'devCaches',
     label: 'pnpm 存储',
     risk: 'safe',
-    candidates: ['%LOCALAPPDATA%\\pnpm', '~/.pnpm-store']
+    // 只指向 store 本身，**不要**指 %LOCALAPPDATA%\pnpm 这个父目录：
+    // 那里除了 store 还放着 .tools（pnpm 自带的 node 等工具链）与 _tmp_ 临时目录，
+    // 整个删掉会把 pnpm 自己的工具链一起清掉，而条目标注只承诺清理「存储」。
+    // 真实 store 位置随配置而变（本机实测 pnpm store path = D:\.pnpm-store\v10），
+    // 这里覆盖默认布局下的两个常见位置。
+    candidates: [
+      '%LOCALAPPDATA%\\pnpm\\store',
+      '%LOCALAPPDATA%\\pnpm-store',
+      '~/.pnpm-store'
+    ]
   },
   { group: 'devCaches', label: 'pip 缓存', risk: 'safe', candidates: ['%LOCALAPPDATA%\\pip\\Cache'] },
   { group: 'devCaches', label: 'uv 缓存', risk: 'safe', candidates: ['%LOCALAPPDATA%\\uv\\cache'] },
@@ -199,12 +208,44 @@ export function normalizeForCompare(input: string): string {
   return resolve(input).replace(/[\\/]+$/, '').toLowerCase()
 }
 
-/** 路径是否落在排除前缀内（含自身） */
+/**
+ * 路径是否落在排除前缀内（含自身）。
+ *
+ * 只判「自身」与「后代」—— 调用方若需要「祖先」语义（候选目录**包含**受保护
+ * 目录），用 coversExcluded。
+ */
 export function isExcluded(pathValue: string, prefixes: string[]): boolean {
   const lower = pathValue.toLowerCase()
   for (const prefix of prefixes) {
     if (lower === prefix) return true
     if (lower.startsWith(`${prefix}\\`) || lower.startsWith(`${prefix}/`)) return true
+  }
+  return false
+}
+
+/** 两个已规范化的路径是否相等或是其祖先（严格包含） */
+function isAncestorOf(ancestor: string, descendant: string): boolean {
+  return (
+    ancestor !== descendant &&
+    (descendant.startsWith(`${ancestor}\\`) || descendant.startsWith(`${ancestor}/`))
+  )
+}
+
+/**
+ * 这个候选路径是否**覆盖**了某个受保护目录（即白名单目录在它之下）。
+ *
+ * 为什么需要单独一条：`%TEMP%` 这种整目录候选，删的时候是 `FO_DELETE` 递归删
+ * 整个目录 —— 用户在 `%TEMP%\keep` 上设的白名单会被连父目录一起删掉。而扫描端
+ * 在测体积时**已经**跳过了白名单子树（worker 的 walk），于是「预计释放」把
+ * 受保护目录排除在外、删除却把它一起删了：**度量范围小于覆盖范围**。
+ *
+ * 调用方见到 true 时应剔除该候选（或至少明确告知用户），不能照删。
+ */
+export function coversExcluded(pathValue: string, prefixes: string[]): boolean {
+  const lower = normalizeForCompare(pathValue)
+  for (const prefix of prefixes) {
+    if (prefix.length === 0) continue
+    if (isAncestorOf(lower, prefix)) return true
   }
   return false
 }

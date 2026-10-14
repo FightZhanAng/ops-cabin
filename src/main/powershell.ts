@@ -6,8 +6,15 @@ import { spawn } from 'node:child_process'
  * 脚本用 -EncodedCommand（UTF-16LE base64）传入 —— 中文路径与特殊字符
  * 不会在命令行参数任何一层被转义搞坏；脚本内先切 UTF-8 输出编码，
  * 拿回的中文才不会变成乱码。全程无窗口、非交互。
+ *
+ * `env` 用于把**动态数据**送进脚本（例如待删除路径的清单文件位置）：
+ * 走环境变量而不是拼脚本源码，路径里的引号/分号/中文都破坏不了脚本。
  */
-export function runPowerShell(script: string, timeoutMs = 20000): Promise<string> {
+export function runPowerShell(
+  script: string,
+  timeoutMs = 20000,
+  env?: Record<string, string>
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const wrapped = [
       '[Console]::OutputEncoding = [System.Text.Encoding]::UTF8',
@@ -18,7 +25,7 @@ export function runPowerShell(script: string, timeoutMs = 20000): Promise<string
     const child = spawn(
       'powershell.exe',
       ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', encoded],
-      { windowsHide: true }
+      { windowsHide: true, ...(env !== undefined ? { env: { ...process.env, ...env } } : {}) }
     )
 
     let stdout = ''
