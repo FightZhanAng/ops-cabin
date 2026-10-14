@@ -96,9 +96,19 @@ export class TrendStore {
   }
 
   #append(point: TrendPoint): void {
+    /*
+     * 不能把「#points 已按时间升序」当成不变量：系统时间回拨（NTP 校时、手动改
+     * 时钟、跨时区）会让新点的 at 小于表里最后一个点。原先只按 `point.at` 算留存
+     * 窗口、filter 完直接 push，于是那一点会插在错误的位置：图上的折线会往回拐，
+     * 而按 at 取「最近 N 个点」的消费方也会拿到错序数据。
+     *
+     * 这里显式按 at 归一：过滤 → 追加 → 排序 → 保留末尾 MAX_POINTS 个。
+     * 点数上限 2000 出头，排序成本可忽略。
+     */
     const cutoff = point.at - RETENTION_MS
     const next = this.#points.filter((item) => item.at >= cutoff)
     next.push(point)
+    next.sort((a, b) => a.at - b.at)
     this.#points = next.length > MAX_POINTS ? next.slice(next.length - MAX_POINTS) : next
     try {
       mkdirSync(dirname(this.#file), { recursive: true })

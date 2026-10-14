@@ -22,6 +22,8 @@ export type NotifyOutcome = 'shown' | 'off' | 'quiet' | 'failed'
 
 /** 留档条数上限 */
 const MAX_RECORDS = 50
+/** 同时保留引用的通知上限（见 #recent 的说明） */
+const MAX_ACTIVE = 8
 
 export interface NotifyRecord {
   at: number
@@ -56,8 +58,13 @@ const KIND_SWITCH = {
 export class Notifier {
   #deps: NotifierDeps
   #records: NotifyRecord[] = []
-  /** 通知对象要留引用：被 GC 掉后点击回调不再触发 */
-  #active: Notification | null = null
+  /**
+   * 通知对象要留引用：被 GC 掉后点击回调不再触发。
+   *
+   * 用 Set 而不是单个字段 —— 只留最近一条时，先弹的那条在第二条出现后就失去
+   * 引用、点它没反应（同时收到两条通知是常态：服务挂了 + 端口被占用）。
+   */
+  #recent = new Set<Notification>()
 
   constructor(deps: NotifierDeps) {
     this.#deps = deps
@@ -111,9 +118,25 @@ export class Notifier {
       const notification = new Notification({ title, body, icon: appIconPath() })
       notification.on('click', () => this.#deps.onClick())
       notification.on('close', () => {
-        if (this.#active === notification) this.#active = null
+        this.#recent.delete(notification)
       })
-      this.#active = notification
+      /*
+       * 保留**所有**还活着的通知，而不是只留最近一条。
+       *
+       * 只持最近一条时，第一条在第二条弹出后失去 JS 引用 —— 本类自己在上面就
+       * 注明了「被 GC 掉后点击回调不再触发」。用户同时收到「服务挂了」与
+       * 「有端口被占用」两条时，先弹的那条点了没反应。用一个 Set 兜住即可。
+       *
+       * 上限兜底：通知多到几十条说明上游该收敛（不该由这里负责），
+       * 但也不能让这个集合无限增长。
+       */
+      this.#recent.add(notification)
+      if (this.#recent.size > MAX_ACTIVE) {
+        for (const old of this.#recent) {
+          if (this.#recent.size <= MAX_ACTIVE) break
+          this.#recent.delete(old)
+        }
+      }
       notification.show()
       return 'shown'
     } catch {

@@ -82,7 +82,15 @@ async function fetchSnapshot(baseline: CpuBaseline | null): Promise<Snapshot> {
   try {
     rows = JSON.parse(output)
   } catch {
-    return { at, ticks, entries, hasCpu: false }
+    /*
+     * 退出码 0 但内容不是预期 JSON（脚本被策略改写、输出混入告警文本等）。
+     *
+     * **必须抛出而不是返回空表**：`#refresh` 只在抛异常时才保留旧表，
+     * 返回空 Map 会被当成「本机一个进程都没有」—— 进程榜与端口页的
+     * 「哪个进程占了这个端口」会一起清空，而调用方还以为采集成功了。
+     * 「读不到」不能伪装成「没有」。
+     */
+    throw new Error('进程表输出不是合法 JSON')
   }
 
   const list = Array.isArray(rows) ? rows : [rows]

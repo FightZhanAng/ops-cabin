@@ -41,8 +41,15 @@ export function formatDuration(ms: number): string {
   return `${days}d ${hours % 24}h`
 }
 
-/** 时钟 HH:mm:ss（用于变化时间线） */
+/**
+ * 时钟 HH:mm:ss（用于变化时间线）。
+ *
+ * 与同文件其它格式化函数同一口径：无效输入给「—」而不是 `NaN:NaN:NaN` ——
+ * 时间戳来自系统事件，读到坏值时该让人看出「这条数据不可信」，
+ * 而不是把一个看起来像时间的乱码印在时间线上。
+ */
 export function formatClock(timestamp: number): string {
+  if (!Number.isFinite(timestamp) || timestamp <= 0) return '—'
   const date = new Date(timestamp)
   const pad = (value: number): string => String(value).padStart(2, '0')
   return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`

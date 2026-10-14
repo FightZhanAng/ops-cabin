@@ -53,8 +53,12 @@ async function listVolumesViaPowerShell(): Promise<VolumeInfo[]> {
     if (!name || !/^[A-Za-z]$/.test(name)) continue
     const used = Number(usedRaw)
     const free = Number(freeRaw)
+    // 与快路径同一口径：总量算出来为 0（或负）的一律丢弃 —— 光盘之类没有容量
+    // 信息的盘会给出 0，留着会让「剩余 0 B」这种假读数出现在界面上。
+    const total = used + free
     if (!Number.isFinite(used) || !Number.isFinite(free) || used < 0 || free < 0) continue
-    volumes.push({ name: `${name.toUpperCase()}:`, used, free, total: used + free })
+    if (!Number.isFinite(total) || total <= 0) continue
+    volumes.push({ name: `${name.toUpperCase()}:`, used, free, total })
   }
   return volumes.sort((a, b) => a.name.localeCompare(b.name))
 }

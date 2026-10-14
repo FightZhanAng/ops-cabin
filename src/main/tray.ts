@@ -35,6 +35,18 @@ export class TrayController {
     return { empty: this.#image.isEmpty(), size: this.#image.getSize() }
   }
 
+  /**
+   * 托盘是不是真的可用（图标不是空图）。
+   *
+   * 图标加载失败时 Electron **不抛异常**，只是托盘区什么都看不见 —— 于是
+   * `tray` 这个字段非空、`new TrayController()` 也算成功，但用户既看不到托盘、
+   * 也没法通过它唤回窗口。把这个「看得见」的判据暴露出来，窗口关闭逻辑才能
+   * 区分「托盘常驻」与「关掉就再也找不回来」。
+   */
+  isUsable(): boolean {
+    return !this.#image.isEmpty()
+  }
+
   destroy(): void {
     this.#tray.destroy()
   }
