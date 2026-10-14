@@ -1,0 +1,61 @@
+# 提交门禁：每次 push / PR 跑 typecheck 与构建，保证 main 上不留红。
+#
+# 为什么单独一条工作流：release.yml 只在打 tag（v*）时触发，等于「发版那天才发现
+# 编译不过」。这个项目没有单元测试框架，typecheck + 构建 是最便宜也最有效的那道闸。
+#
+# 关于 e2e：scripts/e2e-*.mjs 是真实启动 Electron 的端到端脚本（会动注册表夹具、
+# 起窗口、截图），跑一轮要几分钟，且需要 Windows GUI 会话。它们在 CI 上默认不跑 ——
+# 这里只跑 typecheck 与构建。要跑 e2e 请在本机执行：
+#   node scripts/e2e-smoke.mjs        （界面冒烟，两轮主题）
+#   node scripts/e2e-autostart.mjs    （启动项/计划任务写操作 + 助手直调）
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        env:
+          # 显式覆盖 .npmrc 里的镜像：CI 在 GitHub 网络上，直连更稳
+          ELECTRON_MIRROR: 'https://github.com/electron/electron/releases/download/'
+          ELECTRON_BUILDER_BINARIES_MIRROR: 'https://github.com/electron-userland/electron-builder-binaries/releases/download/'
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+      # e2e 脚本的语法也过一次 —— 它们不在 typecheck 的覆盖范围里（.mjs），
+      # 改坏了要等到手动跑那一步才发现。
+      - name: Syntax check e2e scripts
+        shell: pwsh
+        run: |
+          $failed = $false
+          Get-ChildItem scripts/e2e-*.mjs, scripts/*.mjs | ForEach-Object {
+            node --check $_.FullName
+            if ($LASTEXITCODE -ne 0) { Write-Host "语法错误：$($_.Name)"; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+          Write-Host 'e2e 脚本语法检查通过'
