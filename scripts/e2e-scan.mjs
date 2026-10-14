@@ -16,6 +16,15 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as wait } from 'node:timers/promises'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/*
+ * ELECTRON_RUN_AS_NODE 从宿主环境漏进来会让 electron.exe 退化成纯 Node ——
+ * 没有 app、没有 BrowserWindow，主进程加载到 electron-updater 就炸
+ * （报 `Cannot read properties of undefined (reading 'getVersion')`，
+ * 栈底会看到 Node.js 的版本号而不是 Electron），表现为「应用未能在限定时间内完成加载」。
+ * 这是宿主环境的事，不该要求每次调用都记得清 —— 与 e2e-smoke.mjs 同口径。
+ */
+delete process.env['ELECTRON_RUN_AS_NODE']
 const PORT = 19225
 const userDataDir = join(tmpdir(), 'ops-cabin-scan-e2e-userdata')
 const smokeDir = join(tmpdir(), 'ops-cabin-smoke')

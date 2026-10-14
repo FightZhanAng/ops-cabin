@@ -20,6 +20,15 @@ import { fileURLToPath } from 'node:url'
 import { setTimeout as wait } from 'node:timers/promises'
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)))
+
+/*
+ * ELECTRON_RUN_AS_NODE 从宿主环境漏进来会让 electron.exe 退化成纯 Node ——
+ * 没有 app、没有 BrowserWindow，主进程加载到 electron-updater 就炸
+ * （报 `Cannot read properties of undefined (reading 'getVersion')`，
+ * 栈底会看到 Node.js 的版本号而不是 Electron），表现为「应用未能在限定时间内完成加载」。
+ * 这是宿主环境的事，不该要求每次调用都记得清 —— 与 e2e-smoke.mjs 同口径。
+ */
+delete process.env['ELECTRON_RUN_AS_NODE']
 const PORT = 19225
 const userDataDir = join(tmpdir(), 'ops-cabin-e2e-autostart-userdata')
 const electronExe = join(root, 'node_modules', 'electron', 'dist', 'electron.exe')
@@ -378,8 +387,28 @@ function callHelper(filePath) {
   )
 }
 
-/** 造一个请求文件（内容由调用方给全，便于构造非法形态） */
+/**
+ * 造一个请求文件（内容由调用方给全，便于构造非法形态）。
+ *
+ * **自动把 payload.nonce 对齐成文件名里的那个 nonce** —— 助手现在会校验两者
+ * 相等（把「这个文件由本应用生成」真正绑定到文件名上），用例里分别调用两次
+ * `nonce()` 的老写法会一律被判非法。需要构造「不匹配」这种非法形态时，
+ * 用下面的 makeMismatchedPayloadFile。
+ */
 function makePayloadFile(fileName, payload) {
+  const file = join(tmpdir(), fileName)
+  const nameNonce = /^ops-cabin-apply-([0-9a-f]{32})\.json$/.exec(fileName)?.[1]
+  const aligned =
+    nameNonce !== undefined && payload && typeof payload === 'object' && 'nonce' in payload
+      ? { ...payload, nonce: nameNonce }
+      : payload
+  writeFileSync(file, JSON.stringify(aligned), 'utf8')
+  helperArtifacts.push(file)
+  return file
+}
+
+/** 造一个「文件名 nonce 与内容 nonce 不一致」的请求文件（专门测绑定校验） */
+function makeMismatchedPayloadFile(fileName, payload) {
   const file = join(tmpdir(), fileName)
   writeFileSync(file, JSON.stringify(payload), 'utf8')
   helperArtifacts.push(file)
@@ -977,6 +1006,27 @@ try {
     '助手拒绝封闭操作集之外的目标（未知域 → invalid）',
     unknownResult?.ok === false && unknownResult?.reason === 'invalid',
     JSON.stringify(unknownResult)
+  )
+
+  // ④a nonce 绑定：文件名里的 hex 与内容里的 nonce 必须一致。
+  //     先把 FIX_FRESH 置为「已启用」，再用一个「内容说禁用、但 nonce 与文件名
+  //     不符」的请求；若助手执行了它，启用位会变成 0x03 —— 据此判定是否被拒。
+  setApprovedBytes(APPROVED_RUN, FIX_FRESH, `02${TAIL}`)
+  const bindBefore = readApprovedBytes(APPROVED_RUN, FIX_FRESH)
+  const mismatchFile = makeMismatchedPayloadFile(`ops-cabin-apply-${nonce()}.json`, {
+    nonce: nonce(),
+    at: Date.now(),
+    op: { target: 'startup', action: 'toggle', id: `registry-hkcu|${FIX_FRESH}`, enabled: false }
+  })
+  callHelper(mismatchFile)
+  const mismatchResult = readHelperResult(mismatchFile)
+  const bindAfter = readApprovedBytes(APPROVED_RUN, FIX_FRESH)
+  check(
+    '助手拒绝 nonce 与文件名不符的请求（invalid）且未执行',
+    mismatchResult?.ok === false &&
+      mismatchResult?.reason === 'invalid' &&
+      bindAfter === bindBefore,
+    `reason=${mismatchResult?.reason} bytes ${bindBefore}→${bindAfter}`
   )
 
   // ④b 任务域：助手路由到任务执行器，真实改到 schtasks（直调不涉及提权，真值走 COM）
