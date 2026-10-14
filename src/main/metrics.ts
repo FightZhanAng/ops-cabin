@@ -66,6 +66,18 @@ export class MetricsMonitor {
     }
   }
 
+  /**
+   * 订阅计数清零并停采样 —— 渲染进程消失时由主进程调用。
+   *
+   * 与 removeSubscriber 的区别是「不管当前几」：页面异常卸载会让计数卡在 1，
+   * 递减永远到不了 0，采样就常驻下去了。
+   */
+  resetSubscribers(): void {
+    this.#subscribers = 0
+    this.#stop()
+    this.#net.stop()
+  }
+
   /** 立即采样一次（渲染层首次打开总览时用） */
   sampleNow(): MetricsSample {
     return this.#sample()

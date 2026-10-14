@@ -68,3 +68,32 @@ export interface KillResult {
   forced: boolean
   error?: string
 }
+
+/** 一个监听者的描述：进程名 + PID —— 界面展示与变化检测共用 */
+export function describeOccupant(entry: { processName: string | null; pid: number }): string {
+  return `${entry.processName ?? '未知进程'} (PID ${entry.pid})`
+}
+
+/**
+ * 某个端口当前的占用描述（null = 没在监听）。
+ *
+ * **必须按协议算全，不能只取第一条。** 条目键是「协议:端口」（见 collect.ts），
+ * TCP 445 与 UDP 445 是两条独立条目，而关注清单只记端口号。早前基线与变化检测
+ * 各写一遍 `entries.find(e => e.port === p)`，只拿到排序后的第一条（TCP 在前），
+ * 于是同号的 UDP 那半永远不进变化检测：UDP 侧被占用或释放不产生任何提醒，
+ * 而显示的占用者也可能不是真正变化的那一个。
+ *
+ * 描述里带协议前缀，两个协议各自的占用者都能区分；跨协议的描述按稳定顺序拼接，
+ * 直接当字符串比较即可（变化检测就是拿它当快照值）。
+ */
+export function describePortOccupants(
+  entries: readonly PortEntry[],
+  port: number
+): string | null {
+  const matches = entries.filter((entry) => entry.port === port)
+  if (matches.length === 0) return null
+  return matches
+    .map((entry) => `${entry.protocol.toUpperCase()} ${describeOccupant(entry)}`)
+    .sort()
+    .join('；')
+}

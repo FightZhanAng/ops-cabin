@@ -1,4 +1,5 @@
 import type { PortChange, PortsSnapshot, WatchItem } from '../../shared/ports'
+import { describePortOccupants } from '../../shared/ports'
 import { collectPorts } from './collect'
 
 /** 有界面订阅时的采样间隔 */
@@ -16,11 +17,6 @@ const BASELINE_MAX_AGE = 10_000
 export interface PortsMonitorCallbacks {
   onSnapshot: (snapshot: PortsSnapshot) => void
   onChanges: (changes: PortChange[]) => void
-}
-
-/** 占用者描述：进程名 + PID —— 变化检测与界面展示共用它 */
-export function describeOccupant(entry: { processName: string | null; pid: number }): string {
-  return `${entry.processName ?? '未知进程'} (PID ${entry.pid})`
 }
 
 /**
@@ -47,7 +43,10 @@ export class PortsMonitor {
    */
   #pendingBaseline = new Set<number>()
   #latest: PortsSnapshot | null = null
-  #busy = false
+  /** 正在飞的那一次采集：首采期间也要互斥，否则会并发跑两遍 netstat */
+  #inflight: Promise<PortsSnapshot> | null = null
+  /** 已销毁标志：dispose 之后不再重排定时器（否则在飞的一拍会把定时器复活） */
+  #disposed = false
 
   constructor(callbacks: PortsMonitorCallbacks) {
     this.#callbacks = callbacks
@@ -78,10 +77,11 @@ export class PortsMonitor {
      */
     const fresh = this.#latest !== null && Date.now() - this.#latest.at <= BASELINE_MAX_AGE
     if (fresh && this.#latest) {
+      // 基线用与变化检测**同一个**描述函数：两处各写一遍正是 UDP 那半被漏掉的根因
+      const latest = this.#latest
       for (const item of items) {
         if (this.#lastSeen.has(item.port)) continue
-        const entry = this.#latest.entries.find((e) => e.port === item.port)
-        this.#lastSeen.set(item.port, entry ? describeOccupant(entry) : null)
+        this.#lastSeen.set(item.port, describePortOccupants(latest.entries, item.port))
       }
     } else {
       for (const item of items) {
@@ -101,12 +101,24 @@ export class PortsMonitor {
     this.#schedule()
   }
 
+  /**
+   * 把订阅计数清零 —— 渲染进程消失（崩溃 / 重载 / 窗口销毁）时由主进程调用。
+   *
+   * 计数原本只靠渲染层成对调用维护，页面异常卸载就会永远停在 1，
+   * 采集以 2 秒节奏常驻下去。清零让「没人看就不跑」这条语义真正成立。
+   */
+  resetSubscribers(): void {
+    this.#subscribers = 0
+    this.#schedule()
+  }
+
   /** 立即采集一次（渲染层首次打开端口页时调用） */
   async sampleNow(): Promise<PortsSnapshot> {
     return this.#sample()
   }
 
   dispose(): void {
+    this.#disposed = true
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = null
@@ -114,6 +126,7 @@ export class PortsMonitor {
   }
 
   #schedule(): void {
+    if (this.#disposed) return
     if (this.#timer) {
       clearTimeout(this.#timer)
       this.#timer = null
@@ -132,25 +145,39 @@ export class PortsMonitor {
     this.#schedule()
   }
 
+  /**
+   * 采一次并广播。
+   *
+   * 互斥判据是 `#inflight` 而不是「`#latest` 是否存在」—— 后者在**首采期间**
+   * （`#latest` 仍是 null）不成立，于是同一时刻的第二次调用会放行，两遍完整
+   * netstat + 进程表采集并发跑。首采恰恰是最容易并发的时刻：
+   * `ports:subscribe` 与 `ports:list`（页面挂载时的两条路径）会几乎同时进来。
+   */
   async #sample(): Promise<PortsSnapshot> {
-    if (this.#busy && this.#latest) return this.#latest
-    this.#busy = true
-    try {
+    if (this.#inflight) return this.#inflight
+    const running = (async (): Promise<PortsSnapshot> => {
       const snapshot = await collectPorts(this.#watchlist.map((item) => item.port))
       this.#latest = snapshot
       this.#callbacks.onSnapshot(snapshot)
       this.#detectChanges(snapshot)
       return snapshot
+    })()
+    this.#inflight = running
+    try {
+      return await running
     } finally {
-      this.#busy = false
+      if (this.#inflight === running) this.#inflight = null
     }
   }
 
   #detectChanges(snapshot: PortsSnapshot): void {
     const changes: PortChange[] = []
     for (const item of this.#watchlist) {
-      const entry = snapshot.entries.find((e) => e.port === item.port)
-      const now = entry ? describeOccupant(entry) : null
+      /*
+       * 按端口号取**全部**协议的占用者（TCP 445 与 UDP 445 是两条独立条目）。
+       * 早前用 `find` 只取第一条，同号的另一半永远不进变化检测。
+       */
+      const now = describePortOccupants(snapshot.entries, item.port)
       // 刚关注、还没建立可靠基线：这一拍只补基线，不报变化（见 #pendingBaseline 的说明）
       if (this.#pendingBaseline.has(item.port)) {
         this.#pendingBaseline.delete(item.port)
