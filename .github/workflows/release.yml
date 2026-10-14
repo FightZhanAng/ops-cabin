@@ -44,9 +44,25 @@ jobs:
       - name: Build & Package
         run: pnpm dist
 
+      # Release 正文取仓库内的中文变更要点（release-notes/<tag>.md）。
+      # 用文件而不是把文字写进工作流：要点随版本一起进版本库，可评审、可回溯，
+      # 也不用依赖自动生成的英文提交列表。缺文件不中断发版，只给占位说明与告警。
+      - name: Prepare release notes
+        shell: bash
+        run: |
+          notes="release-notes/${{ github.ref_name }}.md"
+          if [ -f "$notes" ]; then
+            cp "$notes" release-body.md
+            echo "Release 正文使用 $notes"
+          else
+            printf '本次发布未提供变更要点（%s 不存在）。\n' "$notes" > release-body.md
+            echo "::warning::$notes 不存在，Release 正文改用占位说明"
+          fi
+
       - name: Upload Release assets
         uses: softprops/action-gh-release@v2
         with:
+          body_path: release-body.md
           files: |
             release/*-setup.exe
             release/*-portable.exe
