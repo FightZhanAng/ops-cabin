@@ -3,12 +3,14 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  type IpcMainInvokeEvent,
   Menu,
   nativeTheme,
   screen,
   shell
 } from 'electron'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import type { AutoResult } from '../shared/auto'
 import type {
   CleanHistoryEntry,
@@ -25,13 +27,14 @@ import type { MetricsSample } from '../shared/metrics'
 import type { NetCheckReport } from '../shared/net'
 import type { KillResult, PortChange, PortsSnapshot, WatchInput } from '../shared/ports'
 import type { ProcEntry } from '../shared/processes'
-import type { ServiceCandidate, ServiceStatus } from '../shared/services'
+import type { ServiceCandidate, ServiceStatusReport } from '../shared/services'
 import type { StartupReport } from '../shared/startup'
 import type { TaskReport } from '../shared/tasks'
 import type { TrendPoint } from '../shared/trend'
 import { DEFAULT_SETTINGS } from '../shared/settings'
 import type { AppInfo, Settings, WindowBounds, WindowState } from '../shared/types'
 import { applyAutoOp } from './autoapply'
+import { createCachedCollector } from './cached'
 import { Cleaner } from './cleaner'
 import { elevateAutoOp } from './elevate'
 import { collectHealth } from './health'
@@ -102,31 +105,41 @@ let isQuitting = false
 
 /* ------------------------------------------------ 带缓存与合流的采集（侧栏与页面会同时要） */
 
+/*
+ * 四份采集（启动项 / 关注服务 / 计划任务 / 系统体检）全部由 createCachedCollector
+ * 生成（见 cached.ts）。TTL、并发合流、失败降级这三件事只有一套实现 —— 每份
+ * 采集在这里只声明「多久算旧」和「结果依赖什么输入」。原先四份各自手写的版本
+ * 已经分叉过一次（服务那条把 degraded 丢了），工厂化就是为了让分叉不再可能。
+ */
+
 /**
- * 启动项采集的缓存。
+ * 启动项采集的缓存时长。
  *
  * 侧栏徽标、启动项页都会要这份数据，而它每次都要起一次 PowerShell（冷启动 1–2 秒）。
  * 不开缓存的话，切一次页面就重跑一次。30 秒的 TTL 足够：自启项只在装/卸软件时才变。
  */
 const STARTUP_TTL = 30_000
-let startupCache: { at: number; report: StartupReport } | null = null
-let startupInflight: Promise<StartupReport> | null = null
-
-/** 服务状态的缓存：状态会变（服务可能停），TTL 比启动项短得多 */
-const SERVICES_TTL = 15_000
-let servicesCache: { at: number; items: ServiceStatus[] } | null = null
-let servicesInflight: Promise<ServiceStatus[]> | null = null
 
 /**
- * 计划任务的缓存。
+ * 允许用「最近一次端口快照」去结束进程的最长快照年龄。
+ *
+ * 端口页每 2 秒推一拍，正常操作时快照必然是这个量级；给到 30 秒是留出采集偶发
+ * 变慢的余量。再旧的快照不能作为杀进程的依据：采集连续失败时 `latest` 不会更新，
+ * 期间目标 PID 可能退出并被新进程复用 —— 拿旧快照去 kill 就是误杀。
+ */
+const KILL_SNAPSHOT_MAX_AGE = 30_000
+
+/** 关注服务状态的缓存时长：状态会变（服务可能停），TTL 比启动项短得多 */
+const SERVICES_TTL = 15_000
+
+/**
+ * 计划任务的缓存时长。
  *
  * 这份数据是本批最贵的一次采集（本机 1.5 秒，全是 COM 枚举的固定开销），
  * 但内容变得很慢：「下次运行时间」要等任务跑过一轮才变。60 秒的 TTL 足够，
  * 而用户点「重新读取」时走 force 绕开。
  */
 const TASKS_TTL = 60_000
-let tasksCache: { at: number; report: TaskReport } | null = null
-let tasksInflight: Promise<TaskReport> | null = null
 
 /** 采集失败时的空报告：界面显示「读不到」，而不是一直转圈 */
 function emptyStartup(error: string): StartupReport {
@@ -153,57 +166,44 @@ function emptyStartup(error: string): StartupReport {
  * 合流是关键：侧栏和页面几乎同时挂载时会有两个请求打进来，
  * 没有合流就会起两次 PowerShell —— 而这正是这个缓存想避免的事。
  */
-function startupReport(force = false): Promise<StartupReport> {
-  const now = Date.now()
-  if (!force && startupCache && now - startupCache.at < STARTUP_TTL) {
-    return Promise.resolve(startupCache.report)
-  }
-  if (startupInflight) return startupInflight
-  startupInflight = collectStartup()
-    .then((report) => {
-      startupCache = { at: Date.now(), report }
-      return report
-    })
-    .catch((error: unknown) =>
-      emptyStartup(error instanceof Error ? error.message : String(error))
-    )
-    .finally(() => {
-      startupInflight = null
-    })
-  return startupInflight
-}
+const startupReport = createCachedCollector<StartupReport>({
+  ttl: STARTUP_TTL,
+  collect: () => collectStartup(),
+  fallback: (error) => emptyStartup(error)
+})
 
-/** 关注服务的当前状态（清单标签合进来；无关注项时直接返回空，不起 PowerShell） */
-function serviceStatuses(force = false): Promise<ServiceStatus[]> {
-  const watch = serviceWatchStore?.all ?? []
-  if (watch.length === 0) return Promise.resolve([])
-
-  const now = Date.now()
-  if (!force && servicesCache && now - servicesCache.at < SERVICES_TTL) {
-    return Promise.resolve(servicesCache.items)
-  }
-  if (servicesInflight) return servicesInflight
-
-  servicesInflight = collectServices(watch.map((item) => item.name))
-    .then(({ items }) => {
-      const byName = new Map(watch.map((item) => [item.name.toLowerCase(), item]))
-      const merged = items.map((item) => {
-        const saved = byName.get(item.name.toLowerCase())
-        return {
-          ...item,
-          label: saved?.label ?? item.label,
-          ...(saved?.note ? { note: saved.note } : {})
-        }
-      })
-      servicesCache = { at: Date.now(), items: merged }
-      return merged
+/**
+ * 关注服务的当前状态（清单标签合进来）。
+ *
+ * `key` 是关注清单的指纹：加/删关注项、或改标签备注，都会让上一份缓存失效。
+ * 这一点必须自动 —— 早前是在三个 handler 里手写 `servicesCache = null`，
+ * 漏一处就会出现「刚加的关注项 15 秒内不显示」，而那种缺陷只在特定操作顺序下复现。
+ *
+ * 无关注项时 `collectServices([])` 会立刻返回空（不起 PowerShell），
+ * 所以这里不需要额外的短路分支。
+ */
+const serviceStatuses = createCachedCollector<ServiceStatusReport>({
+  ttl: SERVICES_TTL,
+  key: () => JSON.stringify((serviceWatchStore?.all ?? []).map((item) => [item.name, item.label, item.note ?? ''])),
+  collect: async () => {
+    const watch = serviceWatchStore?.all ?? []
+    const { items, degraded, error } = await collectServices(watch.map((item) => item.name))
+    const byName = new Map(watch.map((item) => [item.name.toLowerCase(), item]))
+    const merged = items.map((item) => {
+      const saved = byName.get(item.name.toLowerCase())
+      return {
+        ...item,
+        label: saved?.label ?? item.label,
+        ...(saved?.note ? { note: saved.note } : {})
+      }
     })
-    .catch(() => [] as ServiceStatus[])
-    .finally(() => {
-      servicesInflight = null
-    })
-  return servicesInflight
-}
+    // 带上采集器给出的原因：界面上「读不到」后面那句「为什么」靠它
+    return { at: Date.now(), items: merged, degraded, ...(error !== undefined ? { error } : {}) }
+  },
+  // 采集失败：如实说「读不到」，而不是回一个空数组 —— 空数组在界面上与
+  // 「没有关注项」同形，会被显示成「全部在跑」（见 shared/services.ts 的说明）
+  fallback: (error) => ({ at: Date.now(), items: [], degraded: true, error })
+})
 
 /** 采集失败时的空报告：界面显示「读不到」，而不是一直转圈 */
 function emptyTasks(error: string): TaskReport {
@@ -226,36 +226,20 @@ function emptyTasks(error: string): TaskReport {
  * 合流同样关键：启动项页的 Tab 切换、以及以后可能有的侧栏徽标会同时要这份数据，
  * 没有合流就会并发起两次 COM 枚举 —— 而这正是这个缓存想避免的事。
  */
-function taskReport(force = false): Promise<TaskReport> {
-  const now = Date.now()
-  if (!force && tasksCache && now - tasksCache.at < TASKS_TTL) {
-    return Promise.resolve(tasksCache.report)
-  }
-  if (tasksInflight) return tasksInflight
-  tasksInflight = collectTasks()
-    .then((report) => {
-      tasksCache = { at: Date.now(), report }
-      return report
-    })
-    .catch((error: unknown) =>
-      emptyTasks(error instanceof Error ? error.message : String(error))
-    )
-    .finally(() => {
-      tasksInflight = null
-    })
-  return tasksInflight
-}
+const taskReport = createCachedCollector<TaskReport>({
+  ttl: TASKS_TTL,
+  collect: () => collectTasks(),
+  fallback: (error) => emptyTasks(error)
+})
 
 /**
- * 系统体检的缓存。
+ * 系统体检的缓存时长。
  *
  * 这份数据是四段 PowerShell **并发**跑出来的（本机 3.8 秒；串行要 11.1 秒），
  * 代价不小但内容变得很慢：磁盘健康、设备错误码、开机时刻都是按小时乃至按天变的。
  * 60 秒的 TTL 足够，用户点「重新体检」时走 force 绕开。
  */
 const HEALTH_TTL = 60_000
-let healthCache: { at: number; report: HealthReport } | null = null
-let healthInflight: Promise<HealthReport> | null = null
 
 /** 采集失败时的空报告：界面显示「读不到」，而不是一直转圈 */
 function emptyHealth(error: string): HealthReport {
@@ -279,25 +263,11 @@ function emptyHealth(error: string): HealthReport {
 }
 
 /** 取体检报告（带 TTL 缓存 + 并发合流） */
-function healthReport(force = false): Promise<HealthReport> {
-  const now = Date.now()
-  if (!force && healthCache && now - healthCache.at < HEALTH_TTL) {
-    return Promise.resolve(healthCache.report)
-  }
-  if (healthInflight) return healthInflight
-  healthInflight = collectHealth()
-    .then((report) => {
-      healthCache = { at: Date.now(), report }
-      return report
-    })
-    .catch((error: unknown) =>
-      emptyHealth(error instanceof Error ? error.message : String(error))
-    )
-    .finally(() => {
-      healthInflight = null
-    })
-  return healthInflight
-}
+const healthReport = createCachedCollector<HealthReport>({
+  ttl: HEALTH_TTL,
+  collect: () => collectHealth(),
+  fallback: (error) => emptyHealth(error)
+})
 
 /* ------------------------------------------------------------ 冒烟自检（实现见 smoke.ts） */
 
@@ -337,20 +307,74 @@ function openExternal(raw: unknown): void {
   }
 }
 
+/**
+ * 本应用自己的入口文档 URL（导航白名单与 IPC 来源校验共用）。
+ *
+ * 生产下是 `file://.../out/renderer/index.html`；开发下由 electron-vite 提供
+ * dev server 地址。只放行**这一个文档**，而不是整个 `file:` 协议 ——
+ * 放行整个协议等于把用户磁盘上任意 .html 都变成了合法的应用页面。
+ */
+function entryDocumentUrl(): string | null {
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl !== undefined && !app.isPackaged) {
+    try {
+      return new URL(devUrl).toString()
+    } catch {
+      return null
+    }
+  }
+  try {
+    return pathToFileURL(join(__dirname, '../renderer/index.html')).toString()
+  } catch {
+    return null
+  }
+}
+
+/** 去掉 hash / query 后的 URL，用于和入口文档比对 */
+function withoutFragment(raw: string): string | null {
+  try {
+    const url = new URL(raw)
+    url.hash = ''
+    url.search = ''
+    return url.toString()
+  } catch {
+    return null
+  }
+}
+
 function hardenWindow(win: BrowserWindow): void {
   // 页面里的 target=_blank / window.open 一律转给系统浏览器
   win.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url)
     return { action: 'deny' }
   })
-  // 页面自身不许导航去别处（dev server 与本地产物文件除外）
+  /*
+   * 导航白名单：只允许停留在本应用自己的那个文档上。
+   *
+   * 早前判据是 `url.startsWith('file://')` —— 放行的是**整个 file: 协议**，
+   * 用户下载目录里的任意 .html 都算「合法页面」；而 Electron 对 webContents 的
+   * 每次导航都会重新执行 preload，且 contextBridge 注入不受页面自身 CSP 约束，
+   * 于是那个页面同样拿到完整的 window.opsCabin（含永久删除、结束进程、UAC 提权、
+   * 安装更新）。dev 分支的裸前缀匹配同理（`http://localhost:5173@evil.com/` 能命中）。
+   *
+   * 现在按「入口文档精确比对」放行，dev 下额外允许同源（HMR 需要）。
+   */
   win.webContents.on('will-navigate', (event, url) => {
+    const target = withoutFragment(url)
+    const entry = entryDocumentUrl()
+    if (target !== null && entry !== null && target === entry) return
+
     const devUrl = process.env['ELECTRON_RENDERER_URL']
-    const allowed = url.startsWith('file://') || (devUrl !== undefined && url.startsWith(devUrl))
-    if (!allowed) {
-      event.preventDefault()
-      openExternal(url)
+    if (devUrl !== undefined && !app.isPackaged) {
+      try {
+        if (target !== null && new URL(target).origin === new URL(devUrl).origin) return
+      } catch {
+        /* dev 地址解析失败：按不放行处理 */
+      }
     }
+
+    event.preventDefault()
+    openExternal(url)
   })
 }
 
@@ -390,6 +414,26 @@ function createMainWindow(): BrowserWindow {
       preload: preloadPath(),
       contextIsolation: true,
       nodeIntegration: false,
+      /*
+       * 沙箱暂不开（原审查条目 #7）—— 这里记录实测结论，别再顺手打开。
+       *
+       * preload 本身满足沙箱化前提（产物只有一处 `require("electron")`，全仓没有
+       * node: 内建依赖），所以打开它不会白屏。但打开之后**渲染层的 window.close()
+       * 会变成销毁窗口**：实测事件序列是
+       *     [probe] webContents destroyed
+       *     [probe] win closed event
+       * 也就是说可取消的 `close` 事件根本不发，主进程没有机会 preventDefault。
+       * 实测对照（同一份代码、只切这一个布尔值）：sandbox:false 时 `close` 正常触发
+       * 并能把它改成「隐藏」；sandbox:true 时窗口被销毁、只剩托盘。
+       *
+       * 本应用的窗口契约是「关窗 = 隐藏、托盘常驻」，而这条路径无法拦截。真实交互
+       * （标题栏按钮走 win:close IPC）不受影响 —— 已实测该路径在两种设置下都正确；
+       * 受影响的是渲染层里任何 window.close() 调用（当前源码里没有，但项目自带的
+       * e2e-check.mjs 正是用它模拟「点关闭按钮」，打开沙箱后那条套件会挂住）。
+       *
+       * 要启用的话请作为一次独立决定：确认渲染层不再有 window.close()、把 e2e-check
+       * 改成驱动真实路径（closeWindow），并接受「窗口被销毁后由托盘唤回」这一形态。
+       */
       sandbox: false
     }
   })
@@ -416,16 +460,42 @@ function createMainWindow(): BrowserWindow {
     })
   })
 
-  // 关闭 = 隐藏：这是个托盘常驻应用，关窗不该退出
+  /*
+   * 关闭 = 隐藏：这是个托盘常驻应用，关窗不该退出。
+   *
+   * 例外是**托盘不可用**时。隐藏窗口会让应用变成看不见也点不开的孤儿进程（没有
+   * 托盘、没有窗口，只剩后台在跑），所以那时放行这次关闭 —— 窗口真的关掉，
+   * `window-all-closed` 随之触发并退出。这条路径正是那句兜底注释所描述的场景，
+   * 之前因为无条件 preventDefault 而永远走不到（`tray` 非空不代表托盘可见：图标
+   * 载入失败时 Electron 不抛异常，只表现为托盘区空白，见 trayUsable 的说明）。
+   *
+   * 先 preventDefault 再记账：记账要写设置文件，而写盘是会失败的（只读、被占用、
+   * 磁盘满）。把记账排在前面的话，一次写盘异常就会让 preventDefault 轮不到执行，
+   * 于是「关窗 = 隐藏」变成「窗口凭空消失」。记账本身也包上 try，理由相同。
+   */
   win.on('close', (event) => {
     if (isQuitting) return
-    event.preventDefault()
-    rememberBounds()
-    win.hide()
+    const hide = trayUsable()
+    if (hide) event.preventDefault()
+    try {
+      rememberBounds()
+    } catch {
+      /* 记不住窗口位置不该影响关窗语义 */
+    }
+    if (hide) win.hide()
   })
 
   win.on('closed', () => {
     mainWindow = null
+  })
+
+  // 渲染进程消失（崩溃、强杀、导航失败）：订阅计数清零，
+  // 否则端口采集会以 2 秒节奏永远跑下去（见 resetSubscribers 的说明）
+  win.webContents.on('render-process-gone', () => {
+    resetSubscribers()
+  })
+  win.webContents.on('destroyed', () => {
+    resetSubscribers()
   })
 
   // 开发模式走 vite dev server；打包后加载产物文件
@@ -445,6 +515,30 @@ function rememberBounds(): void {
   const [x, y] = mainWindow.getPosition()
   const [width, height] = mainWindow.getSize()
   settingsStore.patch({ windowBounds: { x, y, width, height } })
+}
+
+/**
+ * 把「按订阅才采集」的计数清零 —— 渲染进程消失时调用。
+ *
+ * 订阅计数原本完全依赖渲染层成对调用 subscribe / unsubscribe：页面异常卸载
+ * （渲染进程崩溃后重载、React 抛错导致 effect 清理没跑、热更新）会让计数永远
+ * 停在 1，于是端口采集以 2 秒节奏常驻 —— 用户既没开着端口页，也丢了「关了就不跑」
+ * 的省电语义。这里在渲染进程消失时清零，让调度重新按「有无订阅、有无关注项」决定。
+ */
+function resetSubscribers(): void {
+  portsMonitor?.resetSubscribers()
+  metricsMonitor?.resetSubscribers()
+}
+
+/**
+ * 托盘是否真的能用来唤回窗口。
+ *
+ * `tray` 非空**不代表**托盘可用：图标加载失败时 Electron 不抛异常，只是托盘区
+ * 什么都看不见（`TrayController.isUsable()` 就是为这件事存在的）。所以判据要看
+ * 「图标不是空图」，而不是只看对象建没建起来。
+ */
+function trayUsable(): boolean {
+  return tray !== null && tray.isUsable()
 }
 
 function showPanel(): void {
@@ -563,8 +657,67 @@ function parseLabelPatch(raw: unknown): { label?: string; note?: string } {
 
 /* ------------------------------------------------------------ IPC */
 
+/**
+ * 发起这次 IPC 的是不是本应用自己的页面。
+ *
+ * 为什么需要：Electron 对 webContents 的**每次导航都会重新执行 preload**，
+ * 而 contextBridge 注入不受页面自身 CSP 约束 —— 只要窗口被导航到别的文档，
+ * 那个文档就拿到了完整的 window.opsCabin（含永久删除、结束进程、UAC 提权、
+ * 下载并安装更新）。页面自身没有注入点也不该把这一层省掉：它是纵深防御，
+ * 且后来者重构界面时很难不踩。
+ *
+ * 判定口径与 will-navigate 的白名单一致：比对入口文档（去 hash/query）。
+ * 拿不到 senderFrame 时**放行**（宁可漏挡也不误伤：这里没有已证实的攻击链，
+ * 而误判会让整个界面失灵）。
+ */
+function isTrustedSender(event: IpcMainInvokeEvent): boolean {
+  let senderUrl: string
+  try {
+    senderUrl = event.senderFrame?.url ?? ''
+  } catch {
+    // senderFrame 在帧已销毁时会抛 —— 无从判定，按放行处理
+    return true
+  }
+  if (senderUrl.length === 0) return true
+
+  const entry = entryDocumentUrl()
+  if (entry === null) return true
+
+  const target = withoutFragment(senderUrl)
+  if (target !== null && target === entry) return true
+
+  // 开发模式：HMR 与 vite 客户端在同源下取页面，放行同源
+  const devUrl = process.env['ELECTRON_RENDERER_URL']
+  if (devUrl !== undefined && !app.isPackaged) {
+    try {
+      if (target !== null && new URL(target).origin === new URL(devUrl).origin) return true
+    } catch {
+      /* 解析失败：落到下面的拒绝 */
+    }
+  }
+  return false
+}
+
+/**
+ * 所有 IPC 的统一注册入口 —— 与裸 `ipcMain.handle` 的唯一区别是来源校验。
+ *
+ * 用统一入口而不是逐个 handler 手写校验：漏一个就等于没做，而后来者新加通道时
+ * 也会自然地走这里。
+ */
+function handle<Args extends unknown[], R>(
+  channel: string,
+  listener: (event: IpcMainInvokeEvent, ...args: Args) => R
+): void {
+  ipcMain.handle(channel, (event, ...args: unknown[]) => {
+    if (!isTrustedSender(event)) {
+      throw new Error(`已拒绝来自非应用页面的 IPC 调用（${channel}）`)
+    }
+    return listener(event, ...(args as Args))
+  })
+}
+
 function registerIpc(): void {
-  ipcMain.handle(
+  handle(
     'app:info',
     (): AppInfo => ({
       name: '运维舱',
@@ -575,17 +728,17 @@ function registerIpc(): void {
       repo: REPO_PAGE
     })
   )
-  ipcMain.handle('app:open-external', (_event, url: unknown) => openExternal(url))
-  ipcMain.handle('app:quit', () => {
+  handle('app:open-external', (_event, url: unknown) => openExternal(url))
+  handle('app:quit', () => {
     isQuitting = true
     app.quit()
   })
-  ipcMain.handle('app:show-in-folder', (_event, path: unknown) => {
+  handle('app:show-in-folder', (_event, path: unknown) => {
     if (typeof path === 'string' && path.length > 0 && path.length <= 1024) {
       shell.showItemInFolder(path)
     }
   })
-  ipcMain.handle('app:pick-directory', async (): Promise<string[]> => {
+  handle('app:pick-directory', async (): Promise<string[]> => {
     if (!mainWindow || mainWindow.isDestroyed()) return []
     const result = await dialog.showOpenDialog(mainWindow, {
       title: '选择要扫描大文件的目录（可多选，最多 8 个）',
@@ -596,10 +749,10 @@ function registerIpc(): void {
   })
 
   /* 窗口控制（自绘标题栏的三个按钮 + 状态查询） */
-  ipcMain.handle('win:minimize', () => {
+  handle('win:minimize', () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.minimize()
   })
-  ipcMain.handle('win:toggle-maximize', (): boolean => {
+  handle('win:toggle-maximize', (): boolean => {
     const win = mainWindow
     if (!win || win.isDestroyed()) return false
     if (win.isMaximized()) win.unmaximize()
@@ -607,17 +760,21 @@ function registerIpc(): void {
     return win.isMaximized()
   })
   // 与原来点系统关闭按钮同一条路径：close 事件里 preventDefault + hide（托盘常驻）
-  ipcMain.handle('win:close', () => {
+  handle('win:close', () => {
     if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
   })
-  ipcMain.handle('win:state', (): WindowState => ({
+  handle('win:state', (): WindowState => ({
     maximized: mainWindow?.isMaximized() ?? false
   }))
 
-  ipcMain.handle('settings:get', () => settingsStore?.settings ?? null)
-  ipcMain.handle('settings:update', (_event, patch: unknown) => {
-    if (!patch || typeof patch !== 'object') return settingsStore?.settings ?? null
-    const applied = (settingsStore as SettingsStore).patch(patch as Partial<Settings>)
+  handle('settings:get', () => settingsStore?.settings ?? null)
+  handle('settings:update', (_event, patch: unknown) => {
+    // 与上一行的 settings:get 同一口径：store 没就绪就什么都不做。
+    // 早前这里用 `as SettingsStore` 把空值保护绕了过去 —— 类型断言能让编译过，
+    // 却让「启动尚未完成时收到 update」变成一次空指针崩溃。
+    if (!settingsStore) return null
+    if (!patch || typeof patch !== 'object') return settingsStore.settings
+    const applied = settingsStore.patch(patch as Partial<Settings>)
     applyTheme(applied.theme)
     scheduler?.setPlan(applied.scanPlan)
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -625,7 +782,7 @@ function registerIpc(): void {
     }
     return applied
   })
-  ipcMain.handle('settings:reset', () => {
+  handle('settings:reset', () => {
     if (!settingsStore) return null
     // 重置用户配置，但保留窗口位置（重置完窗口还在原地）
     const bound = settingsStore.settings.windowBounds
@@ -639,10 +796,10 @@ function registerIpc(): void {
   })
 
   /* 磁盘扫描与清理 */
-  ipcMain.handle('scan:start', (_event, raw: unknown) => runScanAndRegister(parseScanOptions(raw)))
-  ipcMain.handle('scan:cancel', () => scanner?.cancel())
+  handle('scan:start', (_event, raw: unknown) => runScanAndRegister(parseScanOptions(raw)))
+  handle('scan:cancel', () => scanner?.cancel())
 
-  ipcMain.handle('clean:run', (_event, rawItems: unknown, rawMode: unknown): Promise<CleanOutcome> => {
+  handle('clean:run', (_event, rawItems: unknown, rawMode: unknown): Promise<CleanOutcome> => {
     if (!cleaner) return Promise.resolve({ ok: false, error: '清理器未就绪' })
     const mode: CleanMode = rawMode === 'permanent' ? 'permanent' : 'recycle'
     return cleaner.run(
@@ -653,14 +810,14 @@ function registerIpc(): void {
   })
 
   /** 清理历史（总览的统计图） */
-  ipcMain.handle('clean:history', (): CleanHistoryEntry[] => cleaner?.history() ?? [])
+  handle('clean:history', (): CleanHistoryEntry[] => cleaner?.history() ?? [])
 
   /* 分区 */
-  ipcMain.handle('volumes:list', () => listVolumes())
+  handle('volumes:list', () => listVolumes())
 
   /* 端口雷达 */
   // 语义是「现在有什么在监听」：每次现采一次（监控器会把并发采样合流）
-  ipcMain.handle('ports:list', async (): Promise<PortsSnapshot | null> => {
+  handle('ports:list', async (): Promise<PortsSnapshot | null> => {
     if (!portsMonitor) return null
     try {
       return await portsMonitor.sampleNow()
@@ -668,29 +825,29 @@ function registerIpc(): void {
       return null
     }
   })
-  ipcMain.handle('ports:subscribe', () => {
+  handle('ports:subscribe', () => {
     portsMonitor?.addSubscriber()
   })
-  ipcMain.handle('ports:unsubscribe', () => {
+  handle('ports:unsubscribe', () => {
     portsMonitor?.removeSubscriber()
   })
 
-  ipcMain.handle('ports:watch:list', () => watchlistStore?.all ?? [])
-  ipcMain.handle('ports:watch:add', (_event, raw: unknown) => {
+  handle('ports:watch:list', () => watchlistStore?.all ?? [])
+  handle('ports:watch:add', (_event, raw: unknown) => {
     const input = parseWatchInput(raw)
     if (!input || !watchlistStore) return watchlistStore?.all ?? []
     const items = watchlistStore.add(input.port, input.label, input.note)
     portsMonitor?.setWatchlist(items)
     return items
   })
-  ipcMain.handle('ports:watch:remove', (_event, rawPort: unknown) => {
+  handle('ports:watch:remove', (_event, rawPort: unknown) => {
     const port = parsePort(rawPort)
     if (port === null || !watchlistStore) return watchlistStore?.all ?? []
     const items = watchlistStore.remove(port)
     portsMonitor?.setWatchlist(items)
     return items
   })
-  ipcMain.handle('ports:watch:update', (_event, rawPort: unknown, rawPatch: unknown) => {
+  handle('ports:watch:update', (_event, rawPort: unknown, rawPatch: unknown) => {
     const port = parsePort(rawPort)
     if (port === null || !watchlistStore) return watchlistStore?.all ?? []
     const items = watchlistStore.update(port, parseWatchPatch(rawPatch))
@@ -698,15 +855,35 @@ function registerIpc(): void {
     return items
   })
 
-  ipcMain.handle('ports:events', () => portEvents?.recent(200) ?? [])
+  handle('ports:events', () => portEvents?.recent(200) ?? [])
 
-  /* 结束进程：安全边界 —— 只允许结束「最近一次端口快照里正在监听」的进程 */
-  ipcMain.handle('ports:kill', async (_event, rawPid: unknown): Promise<KillResult> => {
+  /*
+   * 结束进程：安全边界 —— 只允许结束「最近一次端口快照里正在监听」的进程。
+   *
+   * 两条校验缺一不可：
+   *   · 目标必须出现在快照里（防止渲染层伪造任意 PID）；
+   *   · 快照必须是**新鲜的**。`portsMonitor.latest` 在采集连续失败时不会更新，
+   *     于是它可以是几分钟甚至几小时前的 —— 期间那个 PID 早可能退出并被新进程
+   *     复用（Windows 的 PID 复用相当积极），照着旧快照去 kill 就是误杀无关进程。
+   *     过期一律拒绝，让用户刷新后重试。
+   */
+  handle('ports:kill', async (_event, rawPid: unknown): Promise<KillResult> => {
     const pid = Number(rawPid)
     if (!Number.isInteger(pid) || pid <= 4) {
       return { ok: false, forced: false, error: '无效的进程号' }
     }
-    const allowed = portsMonitor?.latest?.entries.some((entry) => entry.pid === pid) ?? false
+    const snapshot = portsMonitor?.latest ?? null
+    if (snapshot === null) {
+      return { ok: false, forced: false, error: '还没有端口快照，请先刷新端口页' }
+    }
+    if (Date.now() - snapshot.at > KILL_SNAPSHOT_MAX_AGE) {
+      return {
+        ok: false,
+        forced: false,
+        error: '端口快照已过期，请刷新后再试（避免误杀复用同一进程号的进程）'
+      }
+    }
+    const allowed = snapshot.entries.some((entry) => entry.pid === pid)
     if (!allowed) {
       return { ok: false, forced: false, error: '该进程不在最近一次端口快照中，已拒绝' }
     }
@@ -718,111 +895,112 @@ function registerIpc(): void {
   })
 
   /* 资源指标 */
-  ipcMain.handle('metrics:sample', (): MetricsSample | null => metricsMonitor?.sampleNow() ?? null)
-  ipcMain.handle('metrics:subscribe', () => {
+  handle('metrics:sample', (): MetricsSample | null => metricsMonitor?.sampleNow() ?? null)
+  handle('metrics:subscribe', () => {
     metricsMonitor?.addSubscriber()
   })
-  ipcMain.handle('metrics:unsubscribe', () => {
+  handle('metrics:unsubscribe', () => {
     metricsMonitor?.removeSubscriber()
   })
 
   /* 长期趋势（总览的趋势图） */
-  ipcMain.handle('trend:list', (): TrendPoint[] => trendStore?.list() ?? [])
+  handle('trend:list', (): TrendPoint[] => trendStore?.list() ?? [])
 
   /* 进程榜（总览；与端口页共用一份进程表采集） */
-  ipcMain.handle('processes:top', (_event, rawLimit: unknown): Promise<ProcEntry[]> => {
+  handle('processes:top', (_event, rawLimit: unknown): Promise<ProcEntry[]> => {
     const limit = Number(rawLimit)
     return processTable.top(Number.isInteger(limit) && limit > 0 ? Math.min(limit, 50) : 12)
   })
 
   /* 联网体检（按需触发，5 秒左右出结果） */
-  ipcMain.handle('netcheck:run', (): Promise<NetCheckReport> => runNetCheck())
+  handle('netcheck:run', (): Promise<NetCheckReport> => runNetCheck())
 
   /* hosts 文件体检（只读：读文件 + 判定，从不写回） */
-  ipcMain.handle('hosts:read', (): HostsReport => readHosts())
+  handle('hosts:read', (): HostsReport => readHosts())
 
   /* 开机自启清单（只读；带 TTL 缓存，侧栏与页面共用一份） */
-  ipcMain.handle(
+  handle(
     'startup:list',
     (_event, rawForce: unknown): Promise<StartupReport> => startupReport(rawForce === true)
   )
 
   /* 计划任务清单（只读；带 TTL 缓存 + 并发合流） */
-  ipcMain.handle(
+  handle(
     'tasks:list',
     (_event, rawForce: unknown): Promise<TaskReport> => taskReport(rawForce === true)
   )
 
   /* 可写操作（启动项/计划任务的禁用启用与删除登记；唯一写实现方见 autoapply.ts） */
-  ipcMain.handle(
+  handle(
     'auto:apply',
     (_event, raw: unknown): Promise<AutoResult> =>
       applyAutoOp(raw, { startupReport, taskReport, elevate: elevateAutoOp })
   )
 
   /* 系统体检（只读；四段 PowerShell 并发采集，带 TTL 缓存 + 并发合流） */
-  ipcMain.handle(
+  handle(
     'health:read',
     (_event, rawForce: unknown): Promise<HealthReport> => healthReport(rawForce === true)
   )
 
-  /* 服务关注清单 */
-  ipcMain.handle('services:status', (): Promise<ServiceStatus[]> => serviceStatuses())
-  ipcMain.handle(
+  /* 服务关注清单；带 TTL 缓存 + 并发合流，读数里带 degraded（失败不伪装成「没有」） */
+  handle('services:status', (): Promise<ServiceStatusReport> => serviceStatuses())
+  handle(
     'services:candidates',
     (): Promise<ServiceCandidate[]> => listServiceCandidates()
   )
-  ipcMain.handle('services:watch:list', () => serviceWatchStore?.all ?? [])
-  ipcMain.handle('services:watch:add', (_event, rawName: unknown, rawLabel: unknown, rawNote: unknown) => {
+  handle('services:watch:list', () => serviceWatchStore?.all ?? [])
+  /*
+   * 关注清单的三个写操作都不需要手动清缓存：serviceStatuses 的缓存以清单指纹为
+   * 身份（见 createCachedCollector 的 key），清单一变，上一份读数自动作废。
+   */
+  handle('services:watch:add', (_event, rawName: unknown, rawLabel: unknown, rawNote: unknown) => {
     const name = parseServiceName(rawName)
     if (name === null || !serviceWatchStore) return serviceWatchStore?.all ?? []
     const label = typeof rawLabel === 'string' ? rawLabel : ''
     const note = typeof rawNote === 'string' ? rawNote : undefined
     const items = serviceWatchStore.add(name, label, note)
-    servicesCache = null
     // 立即建立基线：新关注的服务当下是什么状态就是什么状态，绝不把「刚关注」当变化
     void serviceMonitor?.syncNow()
     return items
   })
-  ipcMain.handle('services:watch:remove', (_event, rawName: unknown) => {
+  handle('services:watch:remove', (_event, rawName: unknown) => {
     const name = parseServiceName(rawName)
     if (name === null || !serviceWatchStore) return serviceWatchStore?.all ?? []
     const items = serviceWatchStore.remove(name)
-    servicesCache = null
     void serviceMonitor?.syncNow()
     return items
   })
-  ipcMain.handle('services:watch:update', (_event, rawName: unknown, rawPatch: unknown) => {
+  handle('services:watch:update', (_event, rawName: unknown, rawPatch: unknown) => {
     const name = parseServiceName(rawName)
     if (name === null || !serviceWatchStore) return serviceWatchStore?.all ?? []
     const items = serviceWatchStore.update(name, parseLabelPatch(rawPatch))
-    servicesCache = null
     return items
   })
 
   /* 设置与维护 */
-  ipcMain.handle('app:open-data-dir', () => {
+  handle('app:open-data-dir', () => {
     const file = settingsStore?.dataFile
     if (file) shell.showItemInFolder(file)
     return file ?? ''
   })
-  ipcMain.handle('ports:events:clear', () => {
+  handle('ports:events:clear', () => {
     portEvents?.clear()
   })
-  ipcMain.handle('scheduler:check-now', () => scheduler?.checkNow() ?? Promise.resolve(false))
+  handle('scheduler:check-now', () => scheduler?.checkNow() ?? Promise.resolve(false))
 
   /* 版本更新 */
-  ipcMain.handle('update:get', () => updater?.describe() ?? null)
-  ipcMain.handle('update:check', () => {
+  handle('update:get', () => updater?.describe() ?? null)
+  handle('update:check', () => {
     updater?.check()
     return updater?.describe() ?? null
   })
-  ipcMain.handle('update:download', () => {
+  handle('update:download', () => {
     updater?.download()
     return updater?.describe() ?? null
   })
-  ipcMain.handle('update:install', () => updater?.install())
-  ipcMain.handle('update:open-page', () => updater?.openReleasePage())
+  handle('update:install', () => updater?.install())
+  handle('update:open-page', () => updater?.openReleasePage())
 }
 
 /** 跑一次扫描并把结果登记给清理器（IPC 与计划任务共用） */
@@ -972,7 +1150,7 @@ if (applyOpIndex >= 0) {
      * 关注服务的后台盯梢。
      *
      * 与端口同构的懒轮询，但节奏慢一倍（采集要起 PowerShell）：无关注项时每拍
-     * 空转，有关注项时 60 秒一拍、复用主进程的 servicesCache —— 窗口开着时
+     * 空转，有关注项时 60 秒一拍、复用主进程那份带 TTL 的读数 —— 窗口开着时
      * 侧栏本来也在拉同一份，实际很少真的多起一次进程。
      */
     serviceMonitor = new ServiceMonitor({
@@ -1008,12 +1186,48 @@ if (applyOpIndex >= 0) {
         mainWindow.setBackgroundColor(currentBg())
       }
     })
+  }).catch((error: unknown) => {
+    /*
+     * 启动链兜底。
+     *
+     * 整条 whenReady 链（SettingsStore → Notifier → Scanner/Cleaner → Scheduler →
+     * Updater → 各 Monitor → createMainWindow → registerIpc）里任何一步抛出，
+     * 原先都会变成一个无人处理的 Promise rejection：应用既不弹窗、也不退出、
+     * 也没有托盘 —— 用户看到的是「双击了图标，什么都没发生」，而日志里一无所有。
+     *
+     * 启动期出错无法继续（后面每一步都依赖前面），如实记录后退出，并在有窗口时
+     * 弹一条错误框说明原因，避免进程以「半启动」状态留在后台。
+     */
+    const message = error instanceof Error ? error.message : String(error)
+    console.error('[ops-cabin] 启动失败：', error)
+    try {
+      dialog.showErrorBox('运维舱启动失败', `${message}\n\n应用即将退出，请检查日志或重新安装。`)
+    } catch {
+      /* 连错误框都弹不出来（更早的失败）时只能静默退出 */
+    }
+    app.exit(1)
   })
 
-  // 托盘常驻：窗口全关也不退出；退出由托盘菜单与 app:quit 决定。
-  // 托盘没建起来时不能留孤儿进程，直接退出。
+  // 全局兜底：未处理的 rejection 记一笔。
+  // 主进程里有多处 `void x()` 的发射后不管调用（监控循环、通知、重采），
+  // 漏 catch 时原先只能靠 Electron 的默认行为，日志里留不下线索。
+  // 刻意**不**接管 uncaughtException：那会把真正的崩溃改成「带着坏状态继续跑」，
+  // 对这个托盘常驻应用反而更危险。
+  process.on('unhandledRejection', (reason) => {
+    console.error('[ops-cabin] 未处理的 Promise rejection：', reason)
+  })
+
+  /*
+   * 托盘常驻：窗口全关也不退出；退出由托盘菜单与 app:quit 决定。
+   *
+   * 但**托盘不可用时必须退出**，不能留孤儿进程：那样用户既没有托盘可点，也没有
+   * 窗口可开，进程却还在后台跑。原判据是 `if (!tray)` —— 它不可达：图标加载失败时
+   * Electron 不抛异常、`tray` 字段照样非空，而窗口关闭只是被隐藏（见 createMainWindow
+   * 的 close 处理），`window-all-closed` 永远不触发。现在判据换成「托盘真的可用」，
+   * 并在窗口关闭时放行这次关闭（同样见 close 处理），这条兜底才真正接得上。
+   */
   app.on('window-all-closed', () => {
-    if (!tray) app.quit()
+    if (!trayUsable()) app.quit()
   })
 
   app.on('before-quit', () => {
