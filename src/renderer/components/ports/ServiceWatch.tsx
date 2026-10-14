@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { JSX } from 'react'
 import { Plus, X } from 'lucide-react'
-import type { ServiceStatus, ServiceWatchItem } from '@shared/services'
+import type { ServiceStatus, ServiceStatusReport, ServiceWatchItem } from '@shared/services'
 import { Button } from '@/components/ui/button'
 import { Lamp, type LampState } from '@/components/instrument/lamp'
 import { AddServiceDialog } from '@/components/ports/AddServiceDialog'
@@ -66,13 +66,13 @@ interface Props {
 
 export function ServiceWatch({ onWatchlistChange }: Props): JSX.Element {
   const [watchlist, setWatchlist] = useState<ServiceWatchItem[]>([])
-  const [statuses, setStatuses] = useState<ServiceStatus[]>([])
+  const [report, setReport] = useState<ServiceStatusReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [addOpen, setAddOpen] = useState(false)
 
   const pullStatus = useCallback(async (): Promise<void> => {
     const next = await window.opsCabin.listServices()
-    setStatuses(next)
+    setReport(next)
   }, [])
 
   useEffect(() => {
@@ -117,6 +117,8 @@ export function ServiceWatch({ onWatchlistChange }: Props): JSX.Element {
    * 与侧栏徽标用同一套判据 —— 侧栏说 1、点进来面板说 2，用户会开始怀疑所有读数。
    * 禁用不算、切换中不算（见 STATE_LAMP 的说明）。
    */
+  const statuses = report?.items ?? []
+  const degraded = report?.degraded === true
   const down = statuses.filter((item) => {
     const state = rowState(item)
     return state === 'down' || state === 'missing'
@@ -127,6 +129,7 @@ export function ServiceWatch({ onWatchlistChange }: Props): JSX.Element {
       data-testid="service-watch"
       data-count={watchlist.length}
       data-down={down}
+      data-degraded={degraded}
       className="flex h-full min-h-0 flex-col"
     >
       <div className="flex shrink-0 items-center gap-2.5 px-3.5 pb-2 pt-0.5">
@@ -135,9 +138,13 @@ export function ServiceWatch({ onWatchlistChange }: Props): JSX.Element {
             ? '还没有关注任何服务'
             : loading
               ? `正在读取 ${watchlist.length} 个关注服务的状态……`
-              : down > 0
-                ? `${watchlist.length} 个关注 · ${down} 个不在跑`
-                : `${watchlist.length} 个关注 · 全部在跑`}
+              : // 读不到必须单独说一句：此时 items 是空的，不拦一下就会印出
+                // 「N 个关注 · 全部在跑」—— 一次采集失败被显示成一切正常。
+                degraded
+                ? `${watchlist.length} 个关注 · 状态读不到`
+                : down > 0
+                  ? `${watchlist.length} 个关注 · ${down} 个不在跑`
+                  : `${watchlist.length} 个关注 · 全部在跑`}
         </span>
         <Button
           variant="outline"
@@ -155,6 +162,17 @@ export function ServiceWatch({ onWatchlistChange }: Props): JSX.Element {
         <div className="px-3.5 pb-3 text-[11px] leading-relaxed text-dim">
           关注服务后这里会显示它有没有在跑。停了的、以及本机已经没有的服务会亮灯 ——
           禁用的不算异常，那是你自己关掉的。
+        </div>
+      ) : degraded ? (
+        // 读不到时不留一块空白：空白看起来像「没有服务」或「都正常」，
+        // 而实际情况是这一拍没读到 —— 说清楚，并保留关注清单不动。
+        <div
+          data-testid="service-degraded"
+          className="border-t border-line px-3.5 py-3 text-[11px] leading-relaxed text-warn"
+        >
+          读不到服务状态{report?.error ? `（${report.error}）` : ''}。
+          <br />
+          这不代表它们正常 —— 面板会在下一拍自动重试。
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto border-t border-line">

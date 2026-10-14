@@ -22,7 +22,11 @@ import type {
   WatchItem
 } from '../shared/ports'
 import type { ProcEntry } from '../shared/processes'
-import type { ServiceCandidate, ServiceStatus, ServiceWatchItem } from '../shared/services'
+import type {
+  ServiceCandidate,
+  ServiceStatusReport,
+  ServiceWatchItem
+} from '../shared/services'
 import type { StartupReport } from '../shared/startup'
 import type { TaskReport } from '../shared/tasks'
 import type { TrendPoint } from '../shared/trend'
@@ -143,9 +147,14 @@ const api = {
     ipcRenderer.invoke('health:read', force) as Promise<HealthReport>,
 
   /* 服务关注清单 */
-  /** 被关注服务的当前状态（无关注项时返回空数组，不会起 PowerShell） */
-  listServices: (): Promise<ServiceStatus[]> =>
-    ipcRenderer.invoke('services:status') as Promise<ServiceStatus[]>,
+  /**
+   * 被关注服务的当前读数（无关注项时 items 为空，不会起 PowerShell）。
+   *
+   * 返回整份报告而不是数组：`degraded` 为真表示这次没读到 —— 界面必须与
+   * 「没有关注项」说不同的话，否则一次采集失败会被显示成「全部在跑」。
+   */
+  listServices: (): Promise<ServiceStatusReport> =>
+    ipcRenderer.invoke('services:status') as Promise<ServiceStatusReport>,
   /** 本机全部服务（添加对话框的候选；只在打开对话框时调） */
   listServiceCandidates: (): Promise<ServiceCandidate[]> =>
     ipcRenderer.invoke('services:candidates') as Promise<ServiceCandidate[]>,

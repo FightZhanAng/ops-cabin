@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { VolumeInfo } from '@shared/disk'
 import { formatBytes } from '@shared/format'
 import type { PortChange, PortsSnapshot, WatchItem } from '@shared/ports'
-import { serviceDown, type ServiceStatus } from '@shared/services'
+import { serviceDown, type ServiceStatusReport } from '@shared/services'
 import type { StartupReport } from '@shared/startup'
 import type { UpdateState } from '@shared/update'
 import { freeTone } from '@/components/instrument/seg-bar'
@@ -21,8 +21,11 @@ import { freeTone } from '@/components/instrument/seg-bar'
  *      那会把采样提到 2 秒常驻，等于为了几个徽标让 netstat 永远跑着。
  *   2. 分区余量 —— 走 fs.statfs（毫秒级，不起进程），一分钟一次可以忽略。
  *   3. 服务状态与自启项 —— 需要一次 PowerShell。服务一分钟一次（状态会变，
- *      「挂了要早知道」是它的全部价值）；自启项靠主进程的 5 分钟 TTL 缓存，
- *      实际上很少真的起进程（自启项只在装/卸软件时才变）。
+ *      「挂了要早知道」是它的全部价值）；自启项走主进程的 TTL 缓存（**30 秒**，
+ *      见 src/main/index.ts 的 STARTUP_TTL），侧栏自己的刷新间隔是 60 秒，
+ *      所以每轮几乎都会真的起一次进程 —— 这是刻意的：自启项页与侧栏要保证
+ *      「刚在任务管理器里禁用过」能在一分钟内反映出来。
+ *      （早前这里写「5 分钟 TTL」，与代码不符，会让人以为可以放心调快刷新。）
  *
  * 读数口径与页面保持一致：磁盘用 freeTone() 的 5/10GB 阈值，不用百分比 ——
  * 侧栏和磁盘页给出不同的判断会比不给更糟。
@@ -83,7 +86,7 @@ export function useSidebarStatus(view: string): SidebarStatus {
   const [watchlist, setWatchlist] = useState<WatchItem[]>([])
   const [snapshot, setSnapshot] = useState<PortsSnapshot | null>(null)
   const [changes, setChanges] = useState<PortChange[]>([])
-  const [services, setServices] = useState<ServiceStatus[]>([])
+  const [services, setServices] = useState<ServiceStatusReport | null>(null)
   const [startup, setStartup] = useState<StartupReport | null>(null)
   const [update, setUpdate] = useState<UpdateState | null>(null)
 
@@ -106,22 +109,29 @@ export function useSidebarStatus(view: string): SidebarStatus {
   // 读取型：挂载、切页、窗口重新获得焦点、每分钟 —— 四个时机各覆盖一类场景
   useEffect(() => {
     let alive = true
+    /*
+     * 每个拉取都要 catch。
+     *
+     * 侧栏是常驻组件，这五个通道里任何一个 reject（主进程忙、IPC 抛错、采集
+     * 超时）都会变成渲染层的 unhandled rejection —— 控制台一片红，而界面上
+     * 什么都不说。侧栏是「有没有事」的读数面，读不到时该保留上一次的值并安静
+     * 等下一样，而不是把整个页面拖进可疑状态。
+     */
     const pull = (): void => {
-      void window.opsCabin.listVolumes().then((next) => {
-        if (alive) setVolumes(next)
-      })
-      void window.opsCabin.getWatchlist().then((next) => {
-        if (alive) setWatchlist(next)
-      })
-      void window.opsCabin.listPortEvents().then((next) => {
-        if (alive) setChanges(next)
-      })
-      void window.opsCabin.listServices().then((next) => {
-        if (alive) setServices(next)
-      })
-      void window.opsCabin.listStartup().then((next) => {
-        if (alive) setStartup(next)
-      })
+      const guard = <T,>(p: Promise<T>, apply: (value: T) => void): void => {
+        void p
+          .then((value) => {
+            if (alive) apply(value)
+          })
+          .catch(() => {
+            /* 读不到就保持现状：侧栏不是权威数据源，下一次 pull 会再试 */
+          })
+      }
+      guard(window.opsCabin.listVolumes(), setVolumes)
+      guard(window.opsCabin.getWatchlist(), setWatchlist)
+      guard(window.opsCabin.listPortEvents(), setChanges)
+      guard(window.opsCabin.listServices(), setServices)
+      guard(window.opsCabin.listStartup(), setStartup)
     }
     pull()
     const timer = setInterval(pull, REFRESH_MS)
@@ -137,7 +147,7 @@ export function useSidebarStatus(view: string): SidebarStatus {
     if (
       volumes.length === 0 &&
       watchlist.length === 0 &&
-      services.length === 0 &&
+      services === null &&
       !startup &&
       update === null
     ) {
@@ -170,7 +180,8 @@ export function useSidebarStatus(view: string): SidebarStatus {
 
     // 服务「不在跑」：判据在 shared/services.ts 里只有一份（serviceDown），
     // 与端口页服务面板、后台盯梢的通知同源 —— 三处读数不一致比只给一处更糟。
-    const serviceDownCount = services.filter(serviceDown).length
+    const serviceItems = services?.items ?? []
+    const serviceDownCount = serviceItems.filter(serviceDown).length
 
     return {
       overview: alerts > 0 ? { tone: 'warn', text: `${alerts} 条`, dot: true } : null,
@@ -184,9 +195,13 @@ export function useSidebarStatus(view: string): SidebarStatus {
       ports:
         serviceDownCount > 0
           ? { tone: 'warn', text: `服务 ${serviceDownCount} 不在跑`, dot: true }
-          : watchlist.length > 0
-            ? { tone: 'idle', text: `${occupied}/${watchlist.length}`, dot: false }
-            : null,
+          : // 读数失败要单独说一句。此时 items 是空的，serviceDownCount 必然是 0 ——
+            // 不说的话这里会落到下面的「2/3」中性读数，把「读不到」显示成一切正常。
+            services?.degraded === true
+            ? { tone: 'warn', text: '服务状态读不到', dot: true }
+            : watchlist.length > 0
+              ? { tone: 'idle', text: `${occupied}/${watchlist.length}`, dot: false }
+              : null,
       startup:
         startup && startup.invalid > 0
           ? { tone: 'warn', text: `${startup.invalid} 项失效`, dot: true }

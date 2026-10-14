@@ -1,5 +1,5 @@
 import { SUSTAINED_REPEAT_MINUTES } from '../../shared/notify'
-import { serviceDown, type ServiceStatus } from '../../shared/services'
+import { serviceDown, type ServiceStatus, type ServiceStatusReport } from '../../shared/services'
 
 /*
  * 关注服务的后台盯梢。
@@ -140,8 +140,12 @@ function describeAlert(alert: ServiceAlert): string {
 }
 
 export interface ServiceMonitorDeps {
-  /** 取当前关注服务的状态（复用主进程的 TTL 缓存与并发合流） */
-  collect: () => Promise<ServiceStatus[]>
+  /**
+   * 取当前关注服务的读数（复用主进程那份带 TTL 与合流的采集）。
+   *
+   * 要整份报告而不是裸数组：`degraded` 是「这一拍没读到」的权威判据。
+   */
+  collect: () => Promise<ServiceStatusReport>
   /** 关注清单是不是非空 —— 用来区分「没有关注项」与「这一拍采集失败」 */
   hasWatch: () => boolean
   /** 判出提醒后交给调用方（走统一通知出口） */
@@ -155,6 +159,8 @@ export class ServiceMonitor {
   #state = createWatchState()
   #timer: ReturnType<typeof setTimeout> | null = null
   #busy = false
+  /** 正在飞的那一拍：syncNow 要等它收尾，避免与它交错 */
+  #inflight: Promise<void> | null = null
 
   constructor(deps: ServiceMonitorDeps) {
     this.#deps = deps
@@ -178,8 +184,17 @@ export class ServiceMonitor {
    *
    * 不这么做的话，新加的关注项要等到下一拍才有基线：这期间的任何变化都会被
    * 「建立基线」吞掉（恰好是最容易发生的时刻 —— 你刚加完关注就会盯着它看）。
+   *
+   * 撞上正在飞的那一拍时**等它结束再补一拍**，而不是直接返回：`#tick` 在
+   * `#busy` 时只把下一拍推到 60 秒后，于是「刚加完关注」到「基线建立」之间
+   * 会有最长一分钟的空窗 —— 而这一分钟恰是用户盯着新服务看的时刻，期间的
+   * 挂掉/恢复会被建立基线吞掉，从此那一拍的变化永远丢了。
    */
   async syncNow(): Promise<void> {
+    // 等在飞的那一拍收尾（若没有则是 no-op），再补一拍，保证这次调用真的对齐了基线
+    while (this.#inflight !== null) {
+      await this.#inflight
+    }
     await this.#tick()
   }
 
@@ -193,19 +208,32 @@ export class ServiceMonitor {
       this.#schedule(TICK_MS)
       return
     }
+    const running = this.#runTick()
+    this.#inflight = running
+    try {
+      await running
+    } finally {
+      if (this.#inflight === running) this.#inflight = null
+    }
+  }
+
+  async #runTick(): Promise<void> {
     this.#busy = true
     try {
-      const items = await this.#deps.collect()
+      const report = await this.#deps.collect()
       /*
-       * 关注清单非空却一条都没采到 = 这一拍采集失败了（serviceStatuses 的 catch
-       * 会给出空数组）。此时**必须原样保留基线**：空数组喂给 diffServices 会把
+       * 「这一拍没读到」时**必须原样保留基线**：把空结果喂给 diffServices 会把
        * 所有 seen/alerted 清掉，下一拍全变成「第一次观察」—— 真正的那个变化
        * （也就是这一拍该报的）就永远丢了，而且此后每一拍都静默。
+       *
+       * 两条判据并用：`degraded` 是采集器给出的权威结论；「关注清单非空却一条
+       * 都没采到」是同义的兜底（collectServices 对每个 wanted 名字都会回一条，
+       * 哪怕是 missing），留着它以防将来某个采集器忘了置 degraded。
        */
-      if (items.length === 0 && this.#deps.hasWatch()) {
+      if (report.degraded || (report.items.length === 0 && this.#deps.hasWatch())) {
         return
       }
-      const alerts = diffServices(this.#state, items, Date.now(), {
+      const alerts = diffServices(this.#state, report.items, Date.now(), {
         repeat: this.#deps.isRepeatEnabled()
       })
       if (alerts.length > 0) this.#deps.onAlerts(alerts)
