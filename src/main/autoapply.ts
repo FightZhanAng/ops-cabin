@@ -117,16 +117,35 @@ export async function executeTaskOp(item: TaskItem, op: AutoOp): Promise<AutoRes
   return changeTaskEnabled(item, op.enabled === true)
 }
 
-/** 删除任务定义（`schtasks /Delete /F`；直接删除不进回收站，与启动项同口径） */
+/**
+ * 删除任务定义（`schtasks /Delete /F`；直接删除不进回收站，与启动项同口径）。
+ *
+ * 删后**回读校验**：与启动项那条路同一口径（那边删后回读 Run 值 / .lnk 是否真没了）。
+ * 只凭 schtasks 的退出码是不够的 —— 计划任务受 ACL、只读标志、以及任务正处于
+ * 运行状态等条件影响，退出码 0 也可能没真删掉，而「删了却没删掉」直接导致用户在
+ * 界面上看到行还在、以为操作没生效。回读走 `/Query`，找不到才算成功。
+ */
 async function deleteTask(item: TaskItem): Promise<AutoResult> {
   const { code, out } = await runSchtasks(['/Delete', '/TN', item.id, '/F'])
-  if (code === 0) return { ok: true }
-  if (/拒绝访问|access is denied/i.test(out)) {
-    return { ok: false, reason: 'needs-admin', message: '这一项需要管理员权限' }
+  if (code !== 0) {
+    if (/拒绝访问|access is denied/i.test(out)) {
+      return { ok: false, reason: 'needs-admin', message: '这一项需要管理员权限' }
+    }
+    // 已经被外部删掉了：目标已达成，按成功上报（随后强制重读，行会消失）
+    if (/找不到|cannot find|does not exist/i.test(out)) return { ok: true }
+    return { ok: false, reason: 'failed', message: out.length > 0 ? out : `schtasks 退出码 ${code}` }
   }
-  // 已经被外部删掉了：目标已达成，按成功上报（随后强制重读，行会消失）
-  if (/找不到|cannot find|does not exist/i.test(out)) return { ok: true }
-  return { ok: false, reason: 'failed', message: out.length > 0 ? out : `schtasks 退出码 ${code}` }
+
+  const still = await runSchtasks(['/Query', '/TN', item.id])
+  if (still.code === 0) {
+    // 查询得到 = 还在。不谎报成功 —— 让用户知道这次没生效。
+    return {
+      ok: false,
+      reason: 'failed',
+      message: '删除命令已执行，但任务仍然存在（可能有权限或状态限制）'
+    }
+  }
+  return { ok: true }
 }
 
 /**
@@ -200,10 +219,19 @@ async function applyStartupOp(op: AutoOp, deps: AutoDeps): Promise<AutoResult> {
 /** 单条启动项操作的执行 —— 直写路径与提权助手共用同一实现 */
 export async function executeStartupOp(item: StartupItem, op: AutoOp): Promise<AutoResult> {
   if (op.action === 'delete') {
-    // S6 / D2：只有「可判定的路径不存在」的条目可删；禁用与否不限制。
+    // S6 / D2 / CONTEXT.md：只有「**确证**路径不存在」的条目可删；禁用与否不限制。
+    // 判据是 pathVerdict === 'missing'：解析不出路径、裸命令名、指向目录、EPERM
+    // 读不到这类「判不了」的情况一律拒绝 —— 它们删掉可能误伤正常自启项，而删除不可逆。
     // UI 不给入口只是第一道 —— 伪造请求同样过不了这里（助手也走这份实现，无旁路）
-    if (item.pathExists) {
-      return { ok: false, reason: 'denied', message: '仅路径失效的条目可删除' }
+    if (item.pathVerdict !== 'missing') {
+      return {
+        ok: false,
+        reason: 'denied',
+        message:
+          item.pathVerdict === 'unknown'
+            ? '这条的路径判不了是否失效，不予删除'
+            : '仅路径失效的条目可删除'
+      }
     }
     return deleteStartupEntry(item)
   }

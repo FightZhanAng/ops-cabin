@@ -66,8 +66,10 @@ const STATE_TONE: Record<RowState, string> = {
 function rowState(item: StartupItem): RowState {
   // 先判 disabled：它没在跑，路径没了也不会每次开机白跑一次。
   // 这个顺序与统计口径绑死（report.invalid 同样只算启用中的项），改任一边都要一起改。
-  if (item.disabled === true) return item.pathExists ? 'disabled' : 'stale'
-  return item.pathExists ? 'ok' : 'invalid'
+  // pathVerdict 只认 'missing' —— 「判不了」不算故障，否则会去清一个其实正常的项。
+  const dead = item.pathVerdict === 'missing'
+  if (item.disabled === true) return dead ? 'stale' : 'disabled'
+  return dead ? 'invalid' : 'ok'
 }
 
 const SOURCE_ORDER: readonly StartupSource[] = [
@@ -91,8 +93,8 @@ function Row({
 }): JSX.Element {
   const state = rowState(item)
   const enabled = item.disabled !== true
-  // 删除入口与主进程的复核口径一致（仅「可判定的路径不存在」）—— 禁用与否不限制
-  const deletable = !item.pathExists
+  // 删除入口与主进程的复核口径一致：**只有确证路径不存在**才可删（判不了不给入口）
+  const deletable = item.pathVerdict === 'missing'
   return (
     <div
       data-testid="startup-row"

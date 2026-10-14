@@ -1,3 +1,5 @@
+import type { PathVerdict } from './types'
+
 /** 启动项的来源位置 */
 export type StartupSource =
   | 'registry-hkcu'
@@ -29,10 +31,21 @@ export interface StartupItem {
   /** 从命令行里解析出的可执行文件路径；解析不出为 null */
   path: string | null
   /**
-   * 路径是否真实存在。
+   * 路径判定结果（存在 / 确认不存在 / 判不了）。
    *
    * 这是本页最有用的一列：卸载软件时经常只删程序、忘了删自启项，
-   * 于是每次开机都白白跑一次「找不到文件」。path 为 null 时它是 false。
+   * 于是每次开机都白白跑一次「找不到文件」。
+   *
+   * 三态而不是布尔：它同时是「删除登记」的闸门（删除不可逆），所以「确证不存在」
+   * 与「判不了」必须分开 —— 拿不到不等于不存在，判不了就不该给删除入口。
+   */
+  pathVerdict: PathVerdict
+  /**
+   * 路径是否可用（兼容既有消费点的布尔投影）。
+   *
+   * 语义：`true` = 路径在**或判不了**（按有效算）；`false` = **确证不存在**。
+   * 即恒等于 `pathVerdict !== 'missing'`。判断「能不能删」请直接用 `pathVerdict`，
+   * 不要用这个布尔 —— 它把「判不了」并进了「有效」这一侧。
    */
   pathExists: boolean
   /**

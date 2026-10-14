@@ -1,5 +1,15 @@
 import type { QuietHours } from './notify'
 
+/**
+ * 「这条记录指向的程序还在不在」的三态判定（`src/main/execpath.ts` 算出）。
+ *
+ * 布尔不够用：这个判据同时是**删除登记**的闸门（启动项删自启登记、计划任务删任务
+ * 定义，都不可逆）。用布尔时「确证不存在」与「判不了」会被压成同一个 false，
+ * 一次解析失误就直接解锁一次不可逆删除。判不了就什么都不做 —— 按 CONTEXT.md 的
+ * 定义，路径判不了的条目不算失效项、也不给删除入口。
+ */
+export type PathVerdict = 'exists' | 'missing' | 'unknown'
+
 /** 渲染层可见的应用信息（preload 桥 app:info 的返回形状） */
 export interface AppInfo {
   name: string
