@@ -1,6 +1,6 @@
 {
   "name": "ops-cabin",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "运维舱 —— Windows 本机运维台：系统资源总览、磁盘扫描清理与端口雷达",
   "author": "tomcato",

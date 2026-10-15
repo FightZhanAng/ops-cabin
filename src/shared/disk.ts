@@ -74,18 +74,40 @@ export interface CleanRequestItem {
   bytes: number
 }
 
+/** 持有目标句柄的进程（由 Restart Manager 点名） */
+export interface CleanHolder {
+  pid: number
+  /** 程序名（如 "Microsoft Edge"）；取不到时为空串 */
+  name: string
+}
+
+/** 失败原因码 —— 决定界面给出哪种建议，文案不靠解析 error 字符串 */
+export type CleanFailReason = 'locked' | 'recycle-cancelled' | 'denied' | 'error'
+
 export interface CleanFailure {
   path: string
+  /** 面向用户的说明（含持有进程名） */
   error: string
+  /** 结构性原因（老数据缺这个字段时按 error 文案兜底） */
+  reason?: CleanFailReason
+  /** 这一项实际删掉的字节数（残留量已经从扫描值里扣掉） */
+  deletedBytes?: number
+  /** 残留的字节数与文件数 */
+  residueBytes?: number
+  residueFiles?: number
+  /** 点名到的持有进程（去重后的并集，按名字排序） */
+  holders?: CleanHolder[]
+  /** 被占 / 受限的具体文件样本（最多若干条，供界面展开） */
+  samples?: string[]
 }
 
 export interface CleanResult {
   at: number
   mode: CleanMode
-  /** 成功删除的项数 */
+  /** 整项删掉的项数（部分删除不算成功，但会体现在 freedBytes 与 failed 里） */
   succeeded: number
   failed: CleanFailure[]
-  /** 释放字节（按扫描值求和，仅含成功项） */
+  /** 释放字节：成功项按扫描值计，失败项按实际删除量计（部分成功也如实累加） */
   freedBytes: number
   /** 确认已不在磁盘上的路径（成功删除 + 本来就不存在）——界面据此把行移除 */
   removed: string[]
